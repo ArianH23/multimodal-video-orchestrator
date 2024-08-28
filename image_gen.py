@@ -1,0 +1,112 @@
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+import json
+
+config = json.load(open('config.json'))
+
+
+def draw_text_with_border(draw, text, pos, font, fill, border_color, border_width):
+    x, y = pos
+
+    # Determine the size of the text
+    (width, baseline), (offset_x, offset_y) = font.font.getsize(text)
+    ascent, descent = font.getmetrics()
+
+    # Create a mask image for the text
+    text_mask = Image.new('L', (width, ascent+descent), 0)
+    mask_draw = ImageDraw.Draw(text_mask)
+    mask_draw.text((0, 0), text, font=font, fill=255)
+
+    # Draw the border
+    for dx in range(-border_width, border_width + 1):
+        for dy in range(-border_width, border_width + 1):
+            if dx != 0 or dy != 0:
+                draw.bitmap((x + dx, y + dy), text_mask, fill=border_color)
+
+    # Draw the text
+    draw.bitmap((x, y), text_mask, fill=fill)
+def wrap_text(text, font, max_width):
+    lines = []
+    words = text.split()
+    line = []
+    for word in words:
+        test_line = ' '.join(line + [word])
+        bbox = font.getbbox(test_line)
+        if bbox[2] - bbox[0] <= max_width:
+            line.append(word)
+        else:
+            lines.append(' '.join(line))
+            line = [word]
+    if line:
+        lines.append(' '.join(line))
+    return lines
+
+
+def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2, text2_pos, font_file, font_sz=32,
+                          fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2, upscale_factor=1.0,
+                          max_width=None):
+    img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+
+    if img is None:
+        raise FileNotFoundError(f"Image at path '{image_path}' not found.")
+
+    if upscale_factor != 1.0:
+        img = cv2.resize(img, (0, 0), fx=upscale_factor, fy=upscale_factor, interpolation=cv2.INTER_CUBIC)
+
+    pil_image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_image, 'RGBA')
+    font = ImageFont.truetype(font_file, font_sz)
+
+    if max_width:
+        lines1 = wrap_text(text1, font, max_width)
+    else:
+        lines1 = [text1]
+
+    y = text1_pos[1]
+    for line in lines1:
+        bbox = font.getbbox(line)
+        text_width = bbox[2] - bbox[0]
+        line_pos = ((pil_image.width - text_width) // 2, y)
+        draw_text_with_border(draw, line, line_pos, font, fill, border_color, border_sz)
+        y += font_sz + border_sz * 2
+
+    if max_width:
+        lines2 = wrap_text(text2, font, max_width)
+    else:
+        lines2 = [text2]
+
+    y = text2_pos[1]
+    for line in lines2:
+        bbox = font.getbbox(line)
+        text_width = bbox[2] - bbox[0]
+        line_pos = ((pil_image.width - text_width) // 2, y)
+        draw_text_with_border(draw, line, line_pos, font, fill, border_color, border_sz)
+        y += font_sz + border_sz * 2
+
+    pil_image.save(output_image_path)
+
+source = config['image_source']
+text1_pos = None
+
+if source == 'playground':
+    text1_pos = (50, 400)
+elif source == 'ideogram':
+    text1_pos = (50, 420)
+
+# Example usage
+overlay_text_on_image(
+    '1.base_images/' + config['image_name'] + '.jpeg',
+    '2.sample_images/' + config['image_name'] + '.jpeg',
+    text1=config['text1'],
+    text1_pos=text1_pos,
+    text2=config['text2'],
+    text2_pos=(50, text1_pos[1] + config['text_y_diff'],),
+    font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
+    font_sz=36*4,  # Size of the font
+    fill=tuple(config['color']),
+    border_color=tuple(config['border_color']),
+    border_sz=4,
+    upscale_factor=1.0,  # Factor to upscale the image
+    max_width=375*4  # Maximum width for text wrapping
+)
