@@ -42,11 +42,14 @@ def wrap_text(text, font, max_width):
         lines.append(' '.join(line))
     return lines
 
+new_width = 1472  # Width in pixels
+new_height = 2624  # Height in pixels
 
 def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2, text2_pos, font_file, font_sz=32,
                           fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2, upscale_factor=1.0,
                           max_width=None):
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    img = cv2.resize(img, (new_width, new_height))
 
     if img is None:
         raise FileNotFoundError(f"Image at path '{image_path}' not found.")
@@ -88,15 +91,19 @@ def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2
 
 source = config['image_source']
 text1_pos = None
+img_suffix = None
 
 if source == 'playground':
     text1_pos = (50, 400)
+    img_suffix = '.png'
 elif source == 'ideogram':
     text1_pos = (50, 420)
+    img_suffix = '.jpeg'
+
 
 # Example usage
 overlay_text_on_image(
-    '1.base_images/' + config['image_name'] + '.jpeg',
+    '1.base_images/' + config['image_name'],
     '2.sample_images/' + config['image_name'] + '.jpeg',
     text1=config['text1'],
     text1_pos=text1_pos,

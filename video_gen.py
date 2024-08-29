@@ -101,12 +101,15 @@ def overlay_text_on_frame(frame, text, pos, font_file, font_sz=32, color=(255, 2
     pil_image = Image.alpha_composite(pil_image.convert('RGBA'), text_layer)
     return cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
 
+new_width = 1472  # Width in pixels
+new_height = 2624  # Height in pixels
 
 def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoom=1.0, end_zoom=2.0, start_pt=(0, 0),
                            end_pt=(1, 1), use_effect=False, text1=None, text1_pos=(50, 50), text2=None,
                            text2_pos=(50, 100), font_file='Montserrat-Regular.ttf', font_sz=32, color=(255, 255, 255),
-                           border_color=(0, 0, 0), border_sz=2, audio_file=None, max_width=None, upscale_factor=1.0, start_audio_sec=0):
+                           border_color=(0, 0, 0), border_sz=2, audio_file=None, max_width=None, upscale_factor=1.0, epic_part_of_audio=6):
     img = cv2.imread(input_img, cv2.IMREAD_UNCHANGED)
+    img = cv2.resize(img, (new_width, new_height))
 
     if use_effect:
         img = enhance_image(img)
@@ -147,7 +150,7 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
 
     if audio_file:
         video_clip = VideoFileClip('temp_video.mp4')
-        audio_clip = AudioFileClip(audio_file).subclip(start_audio_sec, start_audio_sec + duration)
+        audio_clip = AudioFileClip(audio_file).subclip(epic_part_of_audio - 6, epic_part_of_audio - 6 + duration)
         audio_clip = audio_clip.audio_fadeout(3)
         final_video = video_clip.set_audio(audio_clip)
         final_video.write_videofile(output_vid, codec='libx264', audio_codec='aac')
@@ -182,12 +185,20 @@ source = config['image_source']
 text1_pos = None
 start_pt = CORNERS_ENUMS[config['start_pt']]
 end_pt = tuple(1 - x for x in start_pt)
+img_suffix = None
 
 if source == 'playground':
     text1_pos = (50, 400)
+    img_suffix = '.png'
+
 
 elif source == 'ideogram':
     text1_pos = (50, 420)
+    img_suffix = '.jpeg'
+
+if config['epic_part_of_audio'] < 6:
+    print("epic pert of audio can't be less than 6, using 6 as value")
+    config['epic_part_of_audio'] = 6
 
 upscaled = {
     "duration": 12,
@@ -209,14 +220,13 @@ upscaled = {
     "audio_file": '4.music/' + config['audio_file'] + '.mp3',  # Path to the audio file
     "max_width": 375*4,  # Maximum width for text wrapping
     "upscale_factor": 1.0,
-    "start_audio_sec": config['start_audio_sec']
-
+    "epic_part_of_audio": config['epic_part_of_audio']
 }
 
 t = time.time()
 # Example usage
 create_ken_burns_video(
-    '1.base_images/' + config['image_name'] + '.jpeg',
+    '1.base_images/' + config['image_name'],
     '5.videos/' + config['image_name'] + '.mp4',
     **upscaled,
 )

@@ -49,6 +49,8 @@ def wrap_text(text, font, max_width):
         lines.append(' '.join(line))
     return lines
 
+new_width = 1472  # Width in pixels
+new_height = 2624  # Height in pixels
 
 def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1, text1_pos, text2, text2_pos, font_file,
                           title_font_sz=64, text_font_sz=32, fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2,
@@ -60,6 +62,7 @@ def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1
 
     if upscale_factor != 1.0:
         img = cv2.resize(img, (0, 0), fx=upscale_factor, fy=upscale_factor, interpolation=cv2.INTER_CUBIC)
+    img = cv2.resize(img, (new_width, new_height))
 
     pil_image = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_image, 'RGBA')
@@ -109,28 +112,44 @@ def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1
 
 source = config['image_source']
 title_pos = None
+img_suffix = None
 
 if source == 'playground':
-    title_pos = (768, 1000)
+    title_pos = (768, 1025)
+    img_suffix = '.png'
+
 elif source == 'ideogram':
     title_pos = (768, 1025)
+    img_suffix = '.jpeg'
+
+title = config['title'].upper()
+if title == 'COLLABORATION':
+    title_font_sz = 72 * 2.6
+    border_sz = 8
+
+if title == 'COMPASSION':
+    title_font_sz = 72 * 3.25
+    border_sz = 12
+else:
+    title_font_sz = 72 * 4
+    border_sz =12
 
 # Example usage
 overlay_text_on_image(
-    '1.base_images/' + config['image_name'] + '.jpeg',
+    '1.base_images/' + config['image_name'],
     '3.title_images/' + config['image_name'] + '.jpeg',
-    title=config['title'],
+    title=config['title'].upper(),
     title_pos=title_pos,  # Position of the title text
     text1="",
     text1_pos=(50, 400),
     text2="",
     text2_pos=(50, 400 + config['text_y_diff'],),
     font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
-    title_font_sz=72*4,  # Size of the title font
+    title_font_sz = title_font_sz,  # Size of the title font
     text_font_sz=36*4,  # Size of the regular text font
     fill=tuple(config['color']),
     border_color= tuple(config['border_color']),
-    border_sz=8*2,
+    border_sz=border_sz,
     upscale_factor=1.0,  # Factor to upscale the image
     max_width=375*4  # Maximum width for text wrapping
 )
