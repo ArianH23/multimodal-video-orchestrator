@@ -54,7 +54,7 @@ new_height = 2624  # Height in pixels
 
 def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1, text1_pos, text2, text2_pos, font_file,
                           title_font_sz=64, text_font_sz=32, fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2,
-                          upscale_factor=1.0, max_width=None):
+                          upscale_factor=1.0, max_width=None, window_size=800):
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
 
     if img is None:
@@ -110,6 +110,31 @@ def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1
 
     pil_image.save(output_image_path)
 
+
+    img_width, img_height = pil_image.size
+    window_width, window_height = window_size, int(window_size*1.8)
+
+    # Calculate aspect ratio
+    aspect_ratio = min(window_width / img_width, window_height / img_height)
+    new_size = (int(img_width * aspect_ratio), int(img_height * aspect_ratio))
+
+    # Resize image for display
+    resized_image = pil_image.resize(new_size)
+
+    # Convert back to OpenCV format for display
+    display_image = cv2.cvtColor(np.array(resized_image), cv2.COLOR_RGB2BGR)
+
+    # Create and resize the display window
+    cv2.namedWindow("Generated Image", cv2.WINDOW_NORMAL)
+    cv2.imshow("Generated Image", display_image)
+    cv2.resizeWindow("Generated Image", new_size[0], new_size[1])
+
+    # Wait indefinitely for a key press
+    cv2.waitKey(0)
+
+    # Destroy all OpenCV windows
+    cv2.destroyAllWindows()
+
 source = config['image_source']
 title_pos = None
 img_suffix = None
@@ -130,9 +155,34 @@ if title == 'COLLABORATION':
 if title == 'COMPASSION':
     title_font_sz = 72 * 3.25
     border_sz = 12
+elif title == 'ADAPTABILITY':
+    title_font_sz = 72 * 3
+    border_sz = 12
+elif title == 'CONFIDENCE':
+    title_font_sz = 72 * 3
+    border_sz = 12
 else:
     title_font_sz = 72 * 4
     border_sz =12
+
+topics_rgb_map = {
+    "strength": [139, 0, 0],
+    "ingenuity": [125, 249, 255],
+    "confidence": [255, 215, 0],
+    "presence": [230, 230, 250],
+    "purpose": [0, 100, 0],
+    "positivity": [255, 255, 0],
+    "compassion": [255, 182, 193],
+    "adaptability": [64, 224, 208],
+    "passion": [255, 69, 0],
+    "discipline": [0, 0, 128],
+    "collaboration": [128, 0, 128],
+    "growth": [80, 200, 120],
+    "curiosity": [0, 128, 128],
+    "resilience": [119, 136, 153]
+}
+
+color = topics_rgb_map[config['title']]
 
 # Example usage
 overlay_text_on_image(
@@ -147,9 +197,10 @@ overlay_text_on_image(
     font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
     title_font_sz = title_font_sz,  # Size of the title font
     text_font_sz=36*4,  # Size of the regular text font
-    fill=tuple(config['color']),
+    fill=tuple(color),
     border_color= tuple(config['border_color']),
     border_sz=border_sz,
     upscale_factor=1.0,  # Factor to upscale the image
-    max_width=375*4  # Maximum width for text wrapping
+    max_width=375*4,  # Maximum width for text wrapping
+    window_size=450
 )

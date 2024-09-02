@@ -47,7 +47,7 @@ new_height = 2624  # Height in pixels
 
 def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2, text2_pos, font_file, font_sz=32,
                           fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2, upscale_factor=1.0,
-                          max_width=None):
+                          max_width=None, window_size=800):
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     img = cv2.resize(img, (new_width, new_height))
 
@@ -89,6 +89,30 @@ def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2
 
     pil_image.save(output_image_path)
 
+    img_width, img_height = pil_image.size
+    window_width, window_height = window_size, int(window_size*1.8)
+
+    # Calculate aspect ratio
+    aspect_ratio = min(window_width / img_width, window_height / img_height)
+    new_size = (int(img_width * aspect_ratio), int(img_height * aspect_ratio))
+
+    # Resize image for display
+    resized_image = pil_image.resize(new_size)
+
+    # Convert back to OpenCV format for display
+    display_image = cv2.cvtColor(np.array(resized_image), cv2.COLOR_RGB2BGR)
+
+    # Create and resize the display window
+    cv2.namedWindow("Generated Image", cv2.WINDOW_NORMAL)
+    cv2.imshow("Generated Image", display_image)
+    cv2.resizeWindow("Generated Image", new_size[0], new_size[1])
+
+    # Wait indefinitely for a key press
+    cv2.waitKey(0)
+
+    # Destroy all OpenCV windows
+    cv2.destroyAllWindows()
+
 source = config['image_source']
 text1_pos = None
 img_suffix = None
@@ -100,6 +124,24 @@ elif source == 'ideogram':
     text1_pos = (50, 420)
     img_suffix = '.jpeg'
 
+topics_rgb_map = {
+    "strength": [139, 0, 0],
+    "ingenuity": [125, 249, 255],
+    "confidence": [255, 215, 0],
+    "presence": [230, 230, 250],
+    "purpose": [0, 100, 0],
+    "positivity": [255, 255, 0],
+    "compassion": [255, 182, 193],
+    "adaptability": [64, 224, 208],
+    "passion": [255, 69, 0],
+    "discipline": [0, 0, 128],
+    "collaboration": [128, 0, 128],
+    "growth": [80, 200, 120],
+    "curiosity": [0, 128, 128],
+    "resilience": [119, 136, 153]
+}
+
+color = topics_rgb_map[config['title'].lower()]
 
 # Example usage
 overlay_text_on_image(
@@ -111,9 +153,10 @@ overlay_text_on_image(
     text2_pos=(50, text1_pos[1] + config['text_y_diff'],),
     font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
     font_sz=36*4,  # Size of the font
-    fill=tuple(config['color']),
+    fill=tuple(color),
     border_color=tuple(config['border_color']),
     border_sz=4,
     upscale_factor=1.0,  # Factor to upscale the image
-    max_width=375*4  # Maximum width for text wrapping
+    max_width=325*4,  # Maximum width for text wrapping
+    window_size=450
 )
