@@ -127,7 +127,7 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
                            end_pt=(1, 1), use_effect=False, text1=None, text1_pos=(50, 50), text2=None,
                            text2_pos=(50, 100), font_file='Montserrat-Regular.ttf', font_sz=32, color=(255, 255, 255),
                            border_color=(0, 0, 0), border_sz=2, audio_file=None, max_width=None, upscale_factor=1.0, epic_part_of_audio=6,
-                           overlay_image_path=None,  overlay_scale_factor=0.2):
+                           overlay_image_path=None,  overlay_scale_factor=0.2, start_fade_in=6):
     img = cv2.imread(input_img, cv2.IMREAD_UNCHANGED)
     img = cv2.resize(img, (new_width, new_height))
 
@@ -136,7 +136,7 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
 
     h, w, _ = img.shape
     total_frames = duration * fps
-    start_fade_frame = 6 * fps
+    start_fade_frame = start_fade_in * fps
     end_fade_frame = start_fade_frame + 2 * fps
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
@@ -186,7 +186,7 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
 
     if audio_file:
         video_clip = VideoFileClip('temp_video.mp4')
-        audio_clip = AudioFileClip(audio_file).subclip(epic_part_of_audio - 6, epic_part_of_audio - 6 + duration)
+        audio_clip = AudioFileClip(audio_file).subclip(epic_part_of_audio - start_fade_in, epic_part_of_audio - start_fade_in + duration)
         audio_clip = audio_clip.audio_fadeout(3)
         final_video = video_clip.set_audio(audio_clip)
         final_video.write_videofile(output_vid, codec='libx264', audio_codec='aac')
@@ -209,9 +209,10 @@ elif source == 'ideogram':
     text1_pos = (50, 420)
     img_suffix = '.jpeg'
 
-if config['epic_part_of_audio'] < 6:
-    print("epic pert of audio can't be less than 6, using 6 as value")
-    config['epic_part_of_audio'] = 6
+start_fade_in = config['start_fade_in']
+if config['epic_part_of_audio'] < start_fade_in:
+    print(f"epic pert of audio can't be less than {start_fade_in}, using {start_fade_in} as value")
+    config['epic_part_of_audio'] = start_fade_in
 
 
 topics_rgb_map = {
@@ -231,7 +232,8 @@ topics_rgb_map = {
     "resilience": [119, 136, 153]
 }
 
-color = topics_rgb_map[config['title']]
+
+color = topics_rgb_map[config['title'].lower()]
 
 
 upscaled = {
@@ -256,14 +258,18 @@ upscaled = {
     "upscale_factor": 1.0,
     "epic_part_of_audio": config['epic_part_of_audio'],
     "overlay_image_path": 'logo.png',  # Path to the overlay image (e.g., a logo)
-    "overlay_scale_factor": 0.75  # Smaller scale factor for the overlay image
+    "overlay_scale_factor": 0.75,  # Smaller scale factor for the overlay image
+    "start_fade_in": start_fade_in,
 }
 
 t = time.time()
-# Example usage
+json_path = '6.done_jsons/' + config['image_name'].split('.')[0] + '.json'
+with open(json_path, 'w') as file:
+    json.dump(config, file, indent=4)
+
 create_ken_burns_video(
     '1.base_images/' + config['image_name'],
-    '5.videos/' + config['image_name'] + '.mp4',
+    '5.videos/' + config['image_name'].split('.')[0] + '.mp4',
     **upscaled,
 )
 print(time.time() - t, 'seconds to complete video creation')

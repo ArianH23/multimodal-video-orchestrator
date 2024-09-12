@@ -151,15 +151,17 @@ title = config['title'].upper()
 if title == 'COLLABORATION':
     title_font_sz = 72 * 2.6
     border_sz = 8
-
-if title == 'COMPASSION':
+elif title == 'COMPASSION':
     title_font_sz = 72 * 3.25
     border_sz = 12
 elif title == 'ADAPTABILITY':
     title_font_sz = 72 * 3
     border_sz = 12
 elif title == 'CONFIDENCE':
-    title_font_sz = 72 * 3
+    title_font_sz = 72 * 3.05
+    border_sz = 12
+elif title == 'RESILIENCE':
+    title_font_sz = 72 * 3.55
     border_sz = 12
 else:
     title_font_sz = 72 * 4
@@ -182,12 +184,12 @@ topics_rgb_map = {
     "resilience": [119, 136, 153]
 }
 
-color = topics_rgb_map[config['title']]
+color = topics_rgb_map[config['title'].lower()]
 
 # Example usage
 overlay_text_on_image(
     '1.base_images/' + config['image_name'],
-    '3.title_images/' + config['image_name'] + '.jpeg',
+    '3.title_images/' + config['image_name'].split('.')[0] + '.jpeg',
     title=config['title'].upper(),
     title_pos=title_pos,  # Position of the title text
     text1="",
@@ -195,7 +197,7 @@ overlay_text_on_image(
     text2="",
     text2_pos=(50, 400 + config['text_y_diff'],),
     font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
-    title_font_sz = title_font_sz,  # Size of the title font
+    title_font_sz=title_font_sz,  # Size of the title font
     text_font_sz=36*4,  # Size of the regular text font
     fill=tuple(color),
     border_color= tuple(config['border_color']),

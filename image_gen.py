@@ -146,7 +146,7 @@ color = topics_rgb_map[config['title'].lower()]
 # Example usage
 overlay_text_on_image(
     '1.base_images/' + config['image_name'],
-    '2.sample_images/' + config['image_name'] + '.jpeg',
+    '2.sample_images/' +  config['image_name'].split('.')[0] + '.jpeg',
     text1=config['text1'],
     text1_pos=text1_pos,
     text2=config['text2'],
