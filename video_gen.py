@@ -3,8 +3,9 @@ import json
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import VideoFileClip, AudioFileClip
-import textwrap
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips, CompositeAudioClip
+from moviepy.audio.AudioClip import AudioArrayClip
+
 
 config = json.load(open('config.json'))
 
@@ -32,6 +33,11 @@ def add_image_to_frame(frame, overlay_image, position):
 
     # Convert the PIL image back to an OpenCV image
     return cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+
+
+def generate_silence(duration=1, fps=44100):
+    silent_array = np.zeros((int(fps * duration), 2))  # Stereo silence
+    return AudioArrayClip(silent_array, fps=fps)
 
 
 def enhance_image(img):
@@ -127,17 +133,31 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
                            end_pt=(1, 1), use_effect=False, text1=None, text1_pos=(50, 50), text2=None,
                            text2_pos=(50, 100), font_file='Montserrat-Regular.ttf', font_sz=32, color=(255, 255, 255),
                            border_color=(0, 0, 0), border_sz=2, audio_file=None, max_width=None, upscale_factor=1.0, epic_part_of_audio=6,
-                           overlay_image_path=None,  overlay_scale_factor=0.2, start_fade_in=6):
+                           overlay_image_path=None,  overlay_scale_factor=0.2, start_fade_in=6, fade_with_voice=False):
     img = cv2.imread(input_img, cv2.IMREAD_UNCHANGED)
     img = cv2.resize(img, (new_width, new_height))
 
     if use_effect:
         img = enhance_image(img)
 
+    additional_audio_clip1 = AudioFileClip(f"7.voices/{config['image_name'].split('.')[0]}/voice1.mp3")
+    additional_audio_clip2 = AudioFileClip(f"7.voices/{config['image_name'].split('.')[0]}/voice2.mp3")
+
+    duration_of_first_audio = additional_audio_clip1.duration
+    duration_of_second_audio = additional_audio_clip2.duration
+    start_silence_duration = 0.3
+    silent_clip1 = generate_silence(duration=1)
+    silent_clip3 = generate_silence(duration=start_silence_duration)
+
     h, w, _ = img.shape
     total_frames = duration * fps
-    start_fade_frame = start_fade_in * fps
+    if fade_with_voice:
+        start_fade_frame = (start_silence_duration + duration_of_first_audio +0.5)*fps
+    else:
+        start_fade_frame = start_fade_in * fps
+
     end_fade_frame = start_fade_frame + 2 * fps
+
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
 
@@ -186,10 +206,24 @@ def create_ken_burns_video(input_img, output_vid, duration=10, fps=30, start_zoo
 
     if audio_file:
         video_clip = VideoFileClip('temp_video.mp4')
-        audio_clip = AudioFileClip(audio_file).subclip(epic_part_of_audio - start_fade_in, epic_part_of_audio - start_fade_in + duration)
-        audio_clip = audio_clip.audio_fadeout(3)
-        final_video = video_clip.set_audio(audio_clip)
+        # audio_clip = AudioFileClip(audio_file).subclip(epic_part_of_audio - start_fade_in, epic_part_of_audio - start_fade_in + duration)
+        # audio_clip = audio_clip.audio_fadeout(3)
+        # final_video = video_clip.set_audio(audio_clip)
+        # final_video.write_videofile(output_vid, codec='libx264', audio_codec='aac')
+        background_audio = AudioFileClip(audio_file).subclip(epic_part_of_audio - start_fade_in,
+                                                             epic_part_of_audio - start_fade_in + duration)
+        background_audio = background_audio.audio_fadeout(3)
+        background_audio = background_audio.volumex(0.325)
+
+        additional_audio_clip1 = additional_audio_clip1
+        additional_audio_clip2 = additional_audio_clip2
+
+        combined_additional_audio = concatenate_audioclips([silent_clip3, additional_audio_clip1, silent_clip1, additional_audio_clip2])
+        final_audio = CompositeAudioClip([background_audio, combined_additional_audio.set_start(0)])  # set_start(0) ensures it starts at the beginning
+        final_video = video_clip.set_audio(final_audio)
+
         final_video.write_videofile(output_vid, codec='libx264', audio_codec='aac')
+
     else:
         import os
         os.rename('temp_video.mp4', output_vid)
@@ -229,7 +263,8 @@ topics_rgb_map = {
     "collaboration": [128, 0, 128],
     "growth": [80, 200, 120],
     "curiosity": [0, 128, 128],
-    "resilience": [119, 136, 153]
+    "resilience": [119, 136, 153],
+    "wisdom": [72, 61, 139]
 }
 
 
@@ -260,6 +295,7 @@ upscaled = {
     "overlay_image_path": 'logo.png',  # Path to the overlay image (e.g., a logo)
     "overlay_scale_factor": 0.75,  # Smaller scale factor for the overlay image
     "start_fade_in": start_fade_in,
+    "fade_with_voice": config['fade_with_voice'],
 }
 
 t = time.time()

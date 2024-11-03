@@ -138,7 +138,8 @@ topics_rgb_map = {
     "collaboration": [128, 0, 128],
     "growth": [80, 200, 120],
     "curiosity": [0, 128, 128],
-    "resilience": [119, 136, 153]
+    "resilience": [119, 136, 153],
+    "wisdom": [72, 61, 139]
 }
 
 color = topics_rgb_map[config['title'].lower()]
