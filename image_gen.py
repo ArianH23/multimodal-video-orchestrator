@@ -4,7 +4,19 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 
 config = json.load(open('config.json'))
+config['text1'] = config['text1'].replace('Ã¡', 'á')
+config['text1'] = config['text1'].replace('Ã©', 'é')
+config['text1'] = config['text1'].replace('Ã\xad', 'í')
+config['text1'] = config['text1'].replace('Ã³', 'ó')
+config['text1'] = config['text1'].replace('Ãº', 'ú')
+config['text1'] = config['text1'].replace('Â¿', '¿')
 
+
+config['text2'] = config['text2'].replace('Ã¡', 'á')
+config['text2'] = config['text2'].replace('Ã©', 'é')
+config['text2'] = config['text2'].replace('Ã\xad', 'í')
+config['text2'] = config['text2'].replace('Ã³', 'ó')
+config['text2'] = config['text2'].replace('Ãº', 'ú')
 
 def draw_text_with_border(draw, text, pos, font, fill, border_color, border_width):
     x, y = pos
@@ -124,23 +136,7 @@ elif source == 'ideogram':
     text1_pos = (50, 420)
     img_suffix = '.jpeg'
 
-topics_rgb_map = {
-    "strength": [139, 0, 0],
-    "ingenuity": [125, 249, 255],
-    "confidence": [255, 215, 0],
-    "presence": [230, 230, 250],
-    "purpose": [0, 100, 0],
-    "positivity": [255, 255, 0],
-    "compassion": [255, 182, 193],
-    "adaptability": [64, 224, 208],
-    "passion": [255, 69, 0],
-    "discipline": [0, 0, 128],
-    "collaboration": [128, 0, 128],
-    "growth": [80, 200, 120],
-    "curiosity": [0, 128, 128],
-    "resilience": [119, 136, 153],
-    "wisdom": [72, 61, 139]
-}
+topics_rgb_map = json.load(open('topics.json'))
 
 color = topics_rgb_map[config['title'].lower()]
 

@@ -148,44 +148,38 @@ elif source == 'ideogram':
     img_suffix = '.jpeg'
 
 title = config['title'].upper()
-if title == 'COLLABORATION':
+if title == 'COLLABORATION' or title == 'DETERMINATION' or title == 'COLABORACION' or title == 'ADAPTABILIDAD' :
     title_font_sz = 72 * 2.6
     border_sz = 8
-elif title == 'COMPASSION':
+elif title == 'COMPASSION' or title == 'POSITIVIDAD' or title == 'RESILIENCIA' or title == 'COMPASION'or title == 'CURIOSIDAD':
     title_font_sz = 72 * 3.25
     border_sz = 12
 elif title == 'ADAPTABILITY':
     title_font_sz = 72 * 3
     border_sz = 12
-elif title == 'CONFIDENCE':
+elif title == 'CONFIDENCE' or title == 'CRECIMIENTO':
     title_font_sz = 72 * 3.05
     border_sz = 12
-elif title == 'RESILIENCE':
+elif title == 'INGENUIDAD':
+    title_font_sz = 72 * 3.4
+    border_sz = 12
+elif title == 'RESILIENCE' or title == 'PRESENCIA' or title == 'CONFIANZA'or title == 'DISCIPLINA' or title == 'PROPOSITO' :
     title_font_sz = 72 * 3.55
     border_sz = 12
 else:
     title_font_sz = 72 * 4
     border_sz =12
 
-topics_rgb_map = {
-    "strength": [139, 0, 0],
-    "ingenuity": [125, 249, 255],
-    "confidence": [255, 215, 0],
-    "presence": [230, 230, 250],
-    "purpose": [0, 100, 0],
-    "positivity": [255, 255, 0],
-    "compassion": [255, 182, 193],
-    "adaptability": [64, 224, 208],
-    "passion": [255, 69, 0],
-    "discipline": [0, 0, 128],
-    "collaboration": [128, 0, 128],
-    "growth": [80, 200, 120],
-    "curiosity": [0, 128, 128],
-    "resilience": [119, 136, 153],
-    "wisdom": [72, 61, 139]
-}
+topics_rgb_map = json.load(open('topics.json'))
+
 
 color = topics_rgb_map[config['title'].lower()]
+config['title'] = config['title'].replace('Ã¡', 'á')
+config['title'] = config['title'].replace('Ã©', 'é')
+config['title'] = config['title'].replace('Ã\xad', 'í')
+config['title'] = config['title'].replace('Ã³', 'ó')
+config['title'] = config['title'].replace('Ãº', 'ú')
+
 
 # Example usage
 overlay_text_on_image(

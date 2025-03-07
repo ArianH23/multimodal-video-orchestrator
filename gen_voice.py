@@ -3,16 +3,29 @@ import json
 import os
 config = json.load(open('config.json'))
 CHUNK_SIZE = 1024
-url = "https://api.elevenlabs.io/v1/text-to-speech/acCWxmzPBgXdHwA63uzP"
+english = 'acCWxmzPBgXdHwA63uzP'
+spanish = 'Ir1QNHvhaJXbAGhT50w3'
+url = f"https://api.elevenlabs.io/v1/text-to-speech/{spanish}"
 title = config['image_name'].split('.')[0]
+config['text1'] = config['text1'].replace('Ã¡', 'á')
+config['text1'] = config['text1'].replace('Ã©', 'é')
+config['text1'] = config['text1'].replace('Ã\xad', 'í')
+config['text1'] = config['text1'].replace('Ã³', 'ó')
+config['text1'] = config['text1'].replace('Ãº', 'ú')
+config['text1'] = config['text1'].replace('Â¿', '¿')
 
+config['text2'] = config['text2'].replace('Ã¡', 'á')
+config['text2'] = config['text2'].replace('Ã©', 'é')
+config['text2'] = config['text2'].replace('Ã\xad', 'í')
+config['text2'] = config['text2'].replace('Ã³', 'ó')
+config['text2'] = config['text2'].replace('Ãº', 'ú')
 newpath = f'7.voices/{title}'
 if not os.path.exists(newpath):
     os.makedirs(newpath)
 
 headers = {
   "Accept": "audio/mpeg",
-  "Content-Type": "application/json",
+  "Content-Type": "application/json; charset=utf-8",
   "xi-api-key": "sk_2ab609e720e0b6d45dc367fb27e427fe12de2c769f2c46ec"
 }
 data1 = {
@@ -21,7 +34,7 @@ data1 = {
   "voice_settings": {
     "stability": 0.5,
     "similarity_boost": 1
-  }
+  },
 }
 
 if data1['text'][-1] != '.':
@@ -41,7 +54,8 @@ data2 = {
   "voice_settings": {
     "stability": 0.5,
     "similarity_boost": 1
-  }
+  },
+  # "language_code": "iso-639-2"
 }
 
 if data2['text'][-1] != '.':
