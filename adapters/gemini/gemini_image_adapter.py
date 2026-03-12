@@ -29,10 +29,11 @@ class GeminiImageAdapter(ImageGeneratorPort, ABC):
         generated_image = result.generated_images[0]
 
         image_bytes = generated_image.image.image_bytes
-        mime_type = generated_image.image.mime_type
-
-        ext = "." + mime_type.split('/')[-1]
-        # path = "current_analysis/" + img_name + ext
-        filename = "current_analysis/" + img_name + ext
-        with open(filename, "wb") as f:
-            f.write(image_bytes)
+        return image_bytes
+        # mime_type = generated_image.image.mime_type
+        #
+        # ext = "." + mime_type.split('/')[-1]
+        # # path = "current_analysis/" + img_name + ext
+        # filename = "current_analysis/" + img_name + ext
+        # with open(filename, "wb") as f:
+        #     f.write(image_bytes)
