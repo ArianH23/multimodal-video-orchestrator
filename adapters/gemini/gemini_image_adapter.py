@@ -13,7 +13,7 @@ class GeminiImageAdapter(ImageGeneratorPort, ABC):
         self.person_generation = "ALLOW_ADULT"  # @param ['DONT_ALLOW', 'ALLOW_ADULT']
         self.aspect_ratio = "9:16"  # @param ["1:1", "3:4", "4:3", "16:9", "9:16"]
 
-    def create_image(self, prompt, img_name):
+    def create_image(self, prompt):
         result = self.client.models.generate_images(
             model=self.model,
             prompt=prompt,

@@ -10,5 +10,5 @@ class TextGenerationPort(ABC):
         pass
 
     @abstractmethod
-    def generate_content_through_image(self, image: PIL.PngImagePlugin.PngImageFile, prompt: str) -> str:
+    def generate_content_through_image(self, image: PIL.PngImagePlugin.PngImageFile, prompt: str) -> dict:
         pass
