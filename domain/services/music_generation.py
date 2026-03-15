@@ -20,13 +20,13 @@ class MusicGenerationService:
         while True:
             try:
                 song_title, audio_bytes = self.music_api.get_music(task_id)
-                break  # If we got the bytes, break the loop
+                break
             except ValueError as e:
-                # Our adapter raises a ValueError if it's still processing
                 print("Still processing, waiting 10 seconds...")
                 time.sleep(10)
 
-        filename = f"data/music/{song_title}_{task_id}.mp3"
+        safe_title = "".join(c for c in song_title if c.isalnum() or c in (' ', '_')).replace(' ', '_')
+        filename = f"data/music/{safe_title}_{task_id}.mp3"
         saved_path = self.storage.save(filename, audio_bytes)
 
         print(f"Track successfully generated and saved to {saved_path}")

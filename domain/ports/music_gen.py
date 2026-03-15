@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 class MusicGeneratorPort(ABC):
 
     @abstractmethod
-    def create_music(self, prompt: str) -> bytes:
+    def create_music(self, prompt: str) -> str:
         pass
 
     @abstractmethod

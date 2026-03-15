@@ -5,7 +5,7 @@ from domain.ports.text_generation import TextGenerationPort
 
 
 class GeminiTextAdapter(TextGenerationPort):
-    def __init__(self, api_key, model="gemini-3-pro-preview"):
+    def __init__(self, api_key, model="gemini-3.1-pro-preview"):
         self.client = genai.Client(api_key=api_key)
         self.model = model
 
