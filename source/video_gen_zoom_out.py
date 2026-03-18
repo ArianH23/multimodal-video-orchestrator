@@ -7,7 +7,9 @@ from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips,
 from moviepy.audio.AudioClip import AudioArrayClip
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
-
+import math
+from multiprocessing import shared_memory
+import pickle
 
 def clean_texts(quotes):
     quotes['text1'] = quotes['text1'].replace('Ã¡', 'á')
@@ -54,6 +56,158 @@ def add_image_to_frame(frame, overlay_image, position):
     return cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
 
 
+_text_cache = None
+_current_shm_name = None
+
+
+def process_frame_with_shm(frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                           start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                           end_fade_frame, overlay_image, overlay_width, overlay_height,
+                           duration, queue, shm_name, cache_size):
+    global _text_cache, _current_shm_name
+
+    # Load cache from shared memory (only once per worker)
+    if _text_cache is None or _current_shm_name != shm_name:
+        shm = shared_memory.SharedMemory(name=shm_name)
+        cache_bytes = bytes(shm.buf[:cache_size])
+        _text_cache = pickle.loads(cache_bytes)
+        _current_shm_name = shm_name
+        shm.close()  # Don't unlink, just close our handle
+
+    # Ken Burns zoom logic
+    if frame_num < total_frames - zoom_out_duration * fps:
+        progress = frame_num / ((total_frames) - zoom_out_duration * fps)
+        zoom = start_zoom + (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        resized_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (start_pt[0] + (end_pt[0] - start_pt[0]) * progress))
+        crop_y = int((new_h - h) * (start_pt[1] + (end_pt[1] - start_pt[1]) * progress))
+        cropped_img = resized_img[crop_y:crop_y + h, crop_x:crop_x + w]
+    else:
+        progress = (frame_num - duration * fps) / (zoom_out_duration * fps)
+        zoom = end_zoom - (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        cropped_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (end_pt[0] + (-end_pt[0]) * progress))
+        crop_y = int((new_h - h) * (end_pt[1] + (-end_pt[1]) * progress))
+        cropped_img = cropped_img[crop_y:crop_y + h, crop_x:crop_x + w]
+
+    # Convert to PIL
+    pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
+
+    # Grab pre-rendered text from LOCAL cache (loaded from shared memory)
+    if frame_num < start_fade_frame:
+        text_layer_np = _text_cache['text1_only']
+    elif frame_num >= end_fade_frame:
+        text_layer_np = _text_cache['both_texts']
+    else:
+        fade_index = int(frame_num - start_fade_frame)
+        text_layer_np = _text_cache['fade_frames'][fade_index]
+
+    # Composite
+    text_layer = Image.fromarray(text_layer_np)
+    pil_image = Image.alpha_composite(pil_image, text_layer)
+
+    if overlay_image:
+        x_position = w - overlay_width - 50
+        y_position = h - overlay_height - 10
+        pil_image.paste(overlay_image, (x_position, y_position), overlay_image)
+
+    cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+    queue.put(1)
+    return frame_num, cropped_img
+
+def process_frame_optimized(frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                            start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                            end_fade_frame, overlay_image, overlay_width, overlay_height,
+                            duration, queue, text_layer_cache):
+    # Ken Burns zoom logic
+    if frame_num < total_frames - zoom_out_duration * fps:
+        progress = frame_num / ((total_frames) - zoom_out_duration * fps)
+        zoom = start_zoom + (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        resized_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (start_pt[0] + (end_pt[0] - start_pt[0]) * progress))
+        crop_y = int((new_h - h) * (start_pt[1] + (end_pt[1] - start_pt[1]) * progress))
+        cropped_img = resized_img[crop_y:crop_y + h, crop_x:crop_x + w]
+    else:
+        progress = (frame_num - duration * fps) / (zoom_out_duration * fps)
+        zoom = end_zoom - (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        cropped_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (end_pt[0] + (-end_pt[0]) * progress))
+        crop_y = int((new_h - h) * (end_pt[1] + (-end_pt[1]) * progress))
+        cropped_img = cropped_img[crop_y:crop_y + h, crop_x:crop_x + w]
+
+    # Convert to PIL
+    pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
+
+    # Grab pre-rendered text from SHARED cache
+    if frame_num < start_fade_frame:
+        text_layer_np = text_layer_cache['text1_only']
+    elif frame_num >= end_fade_frame:
+        text_layer_np = text_layer_cache['both_texts']
+    else:
+        fade_index = int(frame_num - start_fade_frame)
+        text_layer_np = text_layer_cache['fade_frames'][fade_index]
+
+    # Composite
+    text_layer = Image.fromarray(text_layer_np)
+    pil_image = Image.alpha_composite(pil_image, text_layer)
+
+    if overlay_image:
+        x_position = w - overlay_width - 50
+        y_position = h - overlay_height - 10
+        pil_image.paste(overlay_image, (x_position, y_position), overlay_image)
+
+    cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+    queue.put(1)
+    return frame_num, cropped_img
+
+def create_text_overlay_layer(w, h, text1, text1_pos, text2, text2_pos, font_file, font_sz,
+                               color, border_color, border_sz, max_width, alpha=1.0):
+    """Pre-render a text overlay layer that can be reused across frames"""
+    text_layer = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(text_layer)
+    font = ImageFont.truetype(font_file, font_sz)
+
+    # Draw text1
+    if text1:
+        lines = wrap_text(text1, font, max_width) if max_width else [text1]
+        y = text1_pos[1]
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            line_pos = ((w - text_width) // 2, y)
+            draw_text_with_border(draw, line, line_pos, font, color, border_color, border_sz)
+            y += font_sz + border_sz * 2
+
+    # Draw text2
+    if text2:
+        lines = wrap_text(text2, font, max_width) if max_width else [text2]
+        y = text2_pos[1]
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            line_pos = ((w - text_width) // 2, y)
+            draw_text_with_border(draw, line, line_pos, font, color, border_color, border_sz)
+            y += font_sz + border_sz * 2
+
+    # Apply alpha if needed
+    if alpha < 1.0:
+        text_layer_np = np.array(text_layer)
+        text_layer_np[..., 3] = (text_layer_np[..., 3] * alpha).astype(np.uint8)
+        text_layer = Image.fromarray(text_layer_np)
+
+    return text_layer
+
+
 def generate_silence(duration=1, fps=44100):
     silent_array = np.zeros((int(fps * duration), 2))  # Stereo silence
     return AudioArrayClip(silent_array, fps=fps)
@@ -83,22 +237,23 @@ def enhance_image(img):
 def draw_text_with_border(draw, text, pos, font, fill, border_color, border_width):
     x, y = pos
 
-    # Determine the size of the text
     (width, baseline), (offset_x, offset_y) = font.font.getsize(text)
     ascent, descent = font.getmetrics()
 
-    # Create a mask image for the text
-    text_mask = Image.new('L', (width, ascent+descent), 0)
+    text_mask = Image.new('L', (width, ascent + descent), 0)
     mask_draw = ImageDraw.Draw(text_mask)
     mask_draw.text((0, 0), text, font=font, fill=255)
 
-    # Draw the border
-    for dx in range(-border_width, border_width + 1):
-        for dy in range(-border_width, border_width + 1):
-            if dx != 0 or dy != 0:
-                draw.bitmap((x + dx, y + dy), text_mask, fill=border_color)
+    # Only draw at cardinal and diagonal directions
+    offsets = []
+    for angle in range(0, 360, 45):  # 8 directions instead of 49
+        dx = int(border_width * math.cos(math.radians(angle)))
+        dy = int(border_width * math.sin(math.radians(angle)))
+        offsets.append((dx, dy))
 
-    # Draw the text
+    for dx, dy in offsets:
+        draw.bitmap((x + dx, y + dy), text_mask, fill=border_color)
+
     draw.bitmap((x, y), text_mask, fill=fill)
 
 
@@ -146,15 +301,17 @@ def overlay_text_on_frame(frame, text, pos, font_file, font_sz=32, color=(255, 2
     return cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
 
 
-def process_frame(frame_num, total_frames, zoom_out_duration, fps, w, h, img, start_pt, end_pt, start_zoom, end_zoom,
-                  text1, text1_pos, text2, text2_pos, start_fade_frame, end_fade_frame, font_file, font_sz,
-                  color, border_color, border_sz, max_width, overlay_image, overlay_width, overlay_height, duration, queue):
+def process_frame(frame_num, total_frames, zoom_out_duration, fps, w, h, img, start_pt, end_pt,
+                  start_zoom, end_zoom, text1, text1_pos, text2, text2_pos, start_fade_frame,
+                  end_fade_frame, font_file, font_sz, color, border_color, border_sz, max_width,
+                  overlay_image, overlay_width, overlay_height, duration, queue,
+                  text_layer_cache):
+    # [Ken Burns zoom logic - unchanged]
     if frame_num < total_frames - zoom_out_duration * fps:
         progress = frame_num / ((total_frames) - zoom_out_duration * fps)
         zoom = start_zoom + (end_zoom - start_zoom) * progress
         new_w = int(w * zoom)
         new_h = int(h * zoom)
-
         resized_img = cv2.resize(img, (new_w, new_h))
         crop_x = int((new_w - w) * (start_pt[0] + (end_pt[0] - start_pt[0]) * progress))
         crop_y = int((new_h - h) * (start_pt[1] + (end_pt[1] - start_pt[1]) * progress))
@@ -169,24 +326,53 @@ def process_frame(frame_num, total_frames, zoom_out_duration, fps, w, h, img, st
         crop_y = int((new_h - h) * (end_pt[1] + (-end_pt[1]) * progress))
         cropped_img = cropped_img[crop_y:crop_y + h, crop_x:crop_x + w]
 
-    if text1:
-        cropped_img = overlay_text_on_frame(cropped_img, text1, text1_pos, font_file, font_sz, color, border_color,
-                                            border_sz, max_width=max_width)
+    # Convert to PIL
+    pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
 
-    if text2 and frame_num >= start_fade_frame:
+    # Select appropriate text layer (they're numpy arrays now)
+    if frame_num < start_fade_frame:
+        text_layer_np = text_layer_cache['text1_only']
+    elif frame_num >= end_fade_frame:
+        text_layer_np = text_layer_cache['both_texts']
+    else:
+        # Fading text2
         fade_progress = (frame_num - start_fade_frame) / (end_fade_frame - start_fade_frame)
         fade_progress = min(fade_progress, 1.0)
-        cropped_img = overlay_text_on_frame(cropped_img, text2, text2_pos, font_file, font_sz, color, border_color,
-                                            border_sz, alpha=fade_progress, max_width=max_width)
 
+        # Combine text1 + fading text2
+        text_layer_np = text_layer_cache['text1_only'].copy()
+        text2_np = text_layer_cache['text2_only'].copy()
+        text2_np[..., 3] = (text2_np[..., 3] * fade_progress).astype(np.uint8)
+
+        # Alpha composite manually in numpy (faster than PIL for this)
+        alpha_text2 = text2_np[..., 3:4] / 255.0
+        alpha_base = text_layer_np[..., 3:4] / 255.0
+        alpha_out = alpha_text2 + alpha_base * (1 - alpha_text2)
+
+        for c in range(3):  # RGB channels
+            text_layer_np[..., c] = (
+                    (text2_np[..., c] * alpha_text2[..., 0] +
+                     text_layer_np[..., c] * alpha_base[..., 0] * (1 - alpha_text2[..., 0])) /
+                    (alpha_out[..., 0] + 1e-6)
+            ).astype(np.uint8)
+
+        text_layer_np[..., 3] = (alpha_out[..., 0] * 255).astype(np.uint8)
+
+    # Convert text layer back to PIL and composite
+    text_layer = Image.fromarray(text_layer_np)
+    pil_image = Image.alpha_composite(pil_image, text_layer)
+
+    # Add overlay image
     if overlay_image:
         x_position = w - overlay_width - 50
         y_position = h - overlay_height - 10
-        cropped_img = add_image_to_frame(cropped_img, overlay_image, (x_position, y_position))
+        pil_image.paste(overlay_image, (x_position, y_position), overlay_image)
 
-    queue.put(1)  # Notify the progress updater
+    cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
 
-    return frame_num, cropped_img  # Return tuple for ordering
+    queue.put(1)
+    return frame_num, cropped_img
+
 
 def progress_updater(queue, total_frames):
     """Reads from the queue and prints progress updates."""
@@ -239,26 +425,95 @@ def create_ken_burns_video(input_img, output_vid, image_name, duration=10, fps=3
         )
         overlay_width, overlay_height = overlay_image.size
 
-    with multiprocessing.Manager() as manager:
-        queue = manager.Queue()  # Shared queue
+    print("Pre-rendering text layers...")
 
-        # Start a separate process to update progress
+    # Pre-render all text layers as numpy arrays
+    text_layers = {}
+
+    if text1:
+        text_layers['text1_only'] = np.array(create_text_overlay_layer(
+            w, h, text1, text1_pos, None, None, font_file, font_sz,
+            color, border_color, border_sz, max_width
+        ))
+
+    if text1 and text2:
+        text_layers['both_texts'] = np.array(create_text_overlay_layer(
+            w, h, text1, text1_pos, text2, text2_pos, font_file, font_sz,
+            color, border_color, border_sz, max_width
+        ))
+
+    # Pre-render fade frames
+    fade_frame_count = int(end_fade_frame - start_fade_frame)
+    fade_frames_list = []
+
+    if text2:
+        text2_layer = create_text_overlay_layer(
+            w, h, None, None, text2, text2_pos, font_file, font_sz,
+            color, border_color, border_sz, max_width
+        )
+
+        for i in range(fade_frame_count + 1):
+            fade_progress = i / fade_frame_count
+            combined = text_layers['text1_only'].copy()
+            combined_pil = Image.fromarray(combined)
+
+            text2_faded = text2_layer.copy()
+            text2_np = np.array(text2_faded)
+            text2_np[..., 3] = (text2_np[..., 3] * fade_progress).astype(np.uint8)
+            text2_faded = Image.fromarray(text2_np)
+
+            combined_pil = Image.alpha_composite(combined_pil, text2_faded)
+            fade_frames_list.append(np.array(combined_pil))
+
+    text_layers['fade_frames'] = fade_frames_list
+    print(f"Pre-rendered {len(fade_frames_list)} fade frames")
+
+    # SERIALIZE the entire cache once and put in shared memory
+    cache_bytes = pickle.dumps(text_layers)
+    cache_size = len(cache_bytes)
+    print(f"Text cache size: {cache_size / 1024 / 1024:.1f} MB")
+
+    # Create shared memory block
+    shm = shared_memory.SharedMemory(create=True, size=cache_size)
+    shm.buf[:cache_size] = cache_bytes
+
+    # Pass only the NAME of the shared memory (tiny string!)
+    shm_name = shm.name
+
+    with multiprocessing.Manager() as manager:
+        queue = manager.Queue()
+
         progress_process = multiprocessing.Process(target=progress_updater, args=(queue, total_frames))
         progress_process.start()
 
-        with ProcessPoolExecutor(max_workers=8) as executor:
-            futures = {executor.submit(process_frame, frame_num, total_frames, zoom_out_duration, fps, w, h, img, start_pt,
-                                       end_pt, start_zoom, end_zoom, text1, text1_pos, text2, text2_pos, start_fade_frame,
-                                       end_fade_frame, font_file, font_sz, color, border_color, border_sz, max_width,
-                                       overlay_image, overlay_width, overlay_height, duration, queue)
-                       for frame_num in range(total_frames)}
+        frames_dict = {}
+        with ProcessPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    process_frame_with_shm,  # New function
+                    frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                    start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                    end_fade_frame, overlay_image, overlay_width, overlay_height,
+                    duration, queue, shm_name, cache_size  # Just pass name and size!
+                ): frame_num for frame_num in range(total_frames)
+            }
 
             for future in as_completed(futures):
                 frame_num, frame = future.result()
-                if frame is not None:  # Avoid writing corrupted frames
-                    video_writer.write(frame)
+                frames_dict[frame_num] = frame
 
-    video_writer.release()
+        progress_process.join()
+
+        # Write frames in order
+        video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
+        for frame_num in sorted(frames_dict.keys()):
+            video_writer.write(frames_dict[frame_num])
+        video_writer.release()
+
+        # Cleanup shared memory
+        shm.close()
+        shm.unlink()
+
 
     if audio_file:
         video_clip = VideoFileClip('temp_video.mp4')
@@ -266,8 +521,8 @@ def create_ken_burns_video(input_img, output_vid, image_name, duration=10, fps=3
         # audio_clip = audio_clip.audio_fadeout(3)
         # final_video = video_clip.set_audio(audio_clip)
         # final_video.write_videofile(output_vid, codec='libx264', audio_codec='aac')
-        background_audio = AudioFileClip(audio_file).subclip(epic_part_of_audio - start_fade_in,
-                                                             epic_part_of_audio - start_fade_in + duration + zoom_out_duration)
+        background_audio = AudioFileClip(audio_file).subclip(epic_part_of_audio - (start_fade_frame // fps),
+                                                             epic_part_of_audio - (start_fade_frame // fps) + duration + zoom_out_duration)
         background_audio = background_audio.audio_fadeout(2)
         background_audio = background_audio.volumex(0.325)
 
@@ -285,12 +540,12 @@ def create_ken_burns_video(input_img, output_vid, image_name, duration=10, fps=3
         os.rename('temp_video.mp4', output_vid)
 
 
-def generate_video(image_name, starting_corner, start_fade_in, epic_part_of_audio, title, fps, quotes, text_y_mult,
+def generate_video(image_name, input_image_path, output_video_path, starting_corner, start_fade_in, epic_part_of_audio, topic, fps, quotes, text_y_mult,
                    border_color, audio_file):
 
     start_pt = CORNERS_ENUMS[starting_corner]
     end_pt = tuple(1 - x for x in start_pt)
-    img_suffix = None
+
     text_y_offset = 150 * text_y_mult
     text1_pos = (50, 400)
 
@@ -302,45 +557,44 @@ def generate_video(image_name, starting_corner, start_fade_in, epic_part_of_audi
     topics_rgb_map = json.load(open('topics.json'))
 
 
-    color = topics_rgb_map[title.lower()]
+    color = topics_rgb_map[topic.lower()]
 
 
-    upscaled = {
+    parameters = {
         "duration": 12,
         "fps": fps,
         "start_zoom": 1,
         "end_zoom": 1.8,
-        "start_pt": start_pt,  # Bottom-right corner
-        "end_pt": end_pt,  # Top-left corner
-        #use_effect=True,  # Apply epic effect
+        "start_pt": start_pt,
+        "end_pt": end_pt,
         "text1": quotes['text1'],
         "text1_pos": text1_pos,
         "text2": quotes['text2'],
         "text2_pos": (50, text1_pos[1] + text_y_offset,),
-        "font_file":'League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
-        "font_sz": 36*4,  # Size of the font
-        "color": tuple(color),  # Color of the text (white)
-        "border_color": tuple(border_color),  # Color of the text border (black)
-        "border_sz": 4,  # Width of the text border
-        "audio_file": '4.music/' + audio_file + '.mp3',  # Path to the audio file
-        "max_width": 325*4,  # Maximum width for text wrapping
+        "font_file": 'font/League_Spartan/static/LeagueSpartan-Bold.ttf',
+        "font_sz": 36*4,
+        "color": tuple(color),
+        "border_color": tuple(border_color),
+        "border_sz": 4,
+        "audio_file": audio_file,
+        "max_width": 325*4,
         "upscale_factor": 1.0,
         "epic_part_of_audio": epic_part_of_audio,
-        "overlay_image_path": 'logo.png',  # Path to the overlay image (e.g., a logo)
-        "overlay_scale_factor": 0.75,  # Smaller scale factor for the overlay image
+        "overlay_image_path": 'logo.png',
+        "overlay_scale_factor": 0.75,
         "start_fade_in": start_fade_in,
         "fade_with_voice": True,
     }
 
     t = time.time()
-    json_path = '6.done_jsons/' + image_name.replace('.', '-') + '.json'
+    json_path = 'data/done_jsons/' + image_name.replace('.', '-') + '.json'
 
     config = {
         "image_name": image_name,
         "starting_corner": starting_corner,
         "start_fade_in": start_fade_in,
         "epic_part_of_audio": epic_part_of_audio,
-        "title": title,
+        "title": topic,
         "fps": fps,
         "quotes": quotes,
         "text_y_mult": text_y_mult,
@@ -353,9 +607,9 @@ def generate_video(image_name, starting_corner, start_fade_in, epic_part_of_audi
 
 
     create_ken_burns_video(
-        '1.base_images/' + image_name + '.png',
-        '5.videos/' + image_name + '.mp4',
+        input_image_path,
+        output_video_path,
         image_name,
-        **upscaled,
+        **parameters,
     )
     print(time.time() - t, 'seconds to complete video creation')

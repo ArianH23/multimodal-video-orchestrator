@@ -7,6 +7,8 @@ CHUNK_SIZE = 1024
 english = 'acCWxmzPBgXdHwA63uzP'
 spanish = 'Ir1QNHvhaJXbAGhT50w3'
 url = f"https://api.elevenlabs.io/v1/text-to-speech/{spanish}"
+
+
 def clean_texts(quotes):
     quotes['text1'] = quotes['text1'].replace('Ã¡', 'á')
     quotes['text1'] = quotes['text1'].replace('Ã©', 'é')
@@ -40,9 +42,9 @@ emotional_resolution = {
 def generate_voices(title, quotes):
 
     clean_texts(quotes)
-    newpath = f'7.voices/{title}'
-    if not os.path.exists(newpath):
-        os.makedirs(newpath)
+    new_path = f'data/voices/{title}'
+    if not os.path.exists(new_path):
+        os.makedirs(new_path)
 
     headers = {
       "Accept": "audio/mpeg",
@@ -75,10 +77,10 @@ def generate_voices(title, quotes):
     if data2['text'][-1] != '.':
         data2['text'] += '.'
 
-    voice2_path = f'7.voices/{title}/voice2.mp3'
+    voice2_path = f'data/voices/{title}/voice2.mp3'
     if not os.path.exists(voice2_path):
         response = requests.post(url, json=data2, headers=headers)
-        with open(f'7.voices/{title}/voice2.mp3', 'wb') as f:
+        with open(voice2_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                 if chunk:
                     f.write(chunk)

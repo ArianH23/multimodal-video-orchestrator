@@ -10,12 +10,14 @@ CORNERS_ENUMS = {
     "BR": (1, 1),
 }
 
+
 def clean_text(title):
     title = title.replace('Ã¡', 'á')
     title = title.replace('Ã©', 'é')
     title = title.replace('Ã\xad', 'í')
     title = title.replace('Ã³', 'ó')
     title = title.replace('Ãº', 'ú')
+
 
 def draw_text_with_border(draw, text, pos, font, fill, border_color, border_width):
     x, y = pos
@@ -25,7 +27,7 @@ def draw_text_with_border(draw, text, pos, font, fill, border_color, border_widt
     ascent, descent = font.getmetrics()
 
     # Create a mask image for the text
-    text_mask = Image.new('L', (width, ascent+descent), 0)
+    text_mask = Image.new('L', (width, ascent + descent), 0)
     mask_draw = ImageDraw.Draw(text_mask)
     mask_draw.text((0, 0), text, font=font, fill=255)
 
@@ -55,10 +57,13 @@ def wrap_text(text, font, max_width):
         lines.append(' '.join(line))
     return lines
 
+
 new_width = 1472  # Width in pixels
 new_height = 2624  # Height in pixels
 
-def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1, text1_pos, text2, text2_pos, font_file,
+
+def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1, text1_pos, text2, text2_pos,
+                          font_file,
                           title_font_sz=64, text_font_sz=32, fill=(255, 255, 255), border_color=(0, 0, 0), border_sz=2,
                           upscale_factor=1.0, max_width=None, window_size=800):
     img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
@@ -116,9 +121,8 @@ def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1
 
     pil_image.save(output_image_path)
 
-
     img_width, img_height = pil_image.size
-    window_width, window_height = window_size, int(window_size*1.8)
+    window_width, window_height = window_size, int(window_size * 1.8)
 
     # Calculate aspect ratio
     aspect_ratio = min(window_width / img_width, window_height / img_height)
@@ -141,7 +145,8 @@ def overlay_text_on_image(image_path, output_image_path, title, title_pos, text1
     # Destroy all OpenCV windows
     cv2.destroyAllWindows()
 
-def generate_title_image(title, image_name, border_color):
+
+def generate_title_image(title, input_image_path, output_image_path, border_color):
     translation = {
         "STRENGTH": "FUERZA",
         "INGENUITY": "INGENIO",
@@ -168,10 +173,10 @@ def generate_title_image(title, image_name, border_color):
     title = translation[title]
     title_pos = (768, 1025)
 
-    if title == 'COLLABORATION' or title == 'DETERMINATION' or title == 'COLABORACION' or title == 'ADAPTABILIDAD' :
+    if title == 'COLLABORATION' or title == 'DETERMINATION' or title == 'COLABORACION' or title == 'ADAPTABILIDAD':
         title_font_sz = 72 * 2.6
         border_sz = 8
-    elif title == 'COMPASSION' or title == 'POSITIVIDAD' or title == 'RESILIENCIA' or title == 'COMPASION'or title == 'CURIOSIDAD':
+    elif title == 'COMPASSION' or title == 'POSITIVIDAD' or title == 'RESILIENCIA' or title == 'COMPASION' or title == 'CURIOSIDAD':
         title_font_sz = 72 * 3.25
         border_sz = 12
     elif title == 'ADAPTABILITY':
@@ -183,13 +188,12 @@ def generate_title_image(title, image_name, border_color):
     elif title == 'INGENUIDAD':
         title_font_sz = 72 * 3.4
         border_sz = 12
-    elif title == 'RESILIENCE' or title == 'PRESENCIA' or title == 'CONFIANZA'or title == 'DISCIPLINA' or title == 'PROPOSITO' :
+    elif title == 'RESILIENCE' or title == 'PRESENCIA' or title == 'CONFIANZA' or title == 'DISCIPLINA' or title == 'PROPOSITO':
         title_font_sz = 72 * 3.55
         border_sz = 12
     else:
         title_font_sz = 72 * 4
-        border_sz =12
-
+        border_sz = 12
 
     topics_rgb_map = json.load(open('topics.json'))
 
@@ -198,21 +202,21 @@ def generate_title_image(title, image_name, border_color):
 
     # Example usage
     overlay_text_on_image(
-        '1.base_images/' + image_name + '.png',
-        '3.title_images/' + image_name + '.jpeg',
+        input_image_path,
+        output_image_path,
         title=title.upper(),
-        title_pos=title_pos,  # Position of the title text
+        title_pos=title_pos,
         text1="",
         text1_pos=(50, 400),
         text2="",
         text2_pos=(0, 0),
-        font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',  # Path to the Montserrat font
-        title_font_sz=title_font_sz,  # Size of the title font
-        text_font_sz=36*4,  # Size of the regular text font
+        font_file='font/League_Spartan/static/LeagueSpartan-Bold.ttf',
+        title_font_sz=title_font_sz,
+        text_font_sz=36 * 4,
         fill=tuple(color),
-        border_color= border_color,
+        border_color=border_color,
         border_sz=border_sz,
-        upscale_factor=1.0,  # Factor to upscale the image
-        max_width=375*4,  # Maximum width for text wrapping
+        upscale_factor=1.0,
+        max_width=375 * 4,
         window_size=450
     )

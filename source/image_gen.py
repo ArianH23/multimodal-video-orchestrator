@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import json
+import math
 
 new_width = 1472  # Width in pixels
 new_height = 2624  # Height in pixels
@@ -26,22 +27,23 @@ def clean_texts(quotes):
 def draw_text_with_border(draw, text, pos, font, fill, border_color, border_width):
     x, y = pos
 
-    # Determine the size of the text
     (width, baseline), (offset_x, offset_y) = font.font.getsize(text)
     ascent, descent = font.getmetrics()
 
-    # Create a mask image for the text
-    text_mask = Image.new('L', (width, ascent+descent), 0)
+    text_mask = Image.new('L', (width, ascent + descent), 0)
     mask_draw = ImageDraw.Draw(text_mask)
     mask_draw.text((0, 0), text, font=font, fill=255)
 
-    # Draw the border
-    for dx in range(-border_width, border_width + 1):
-        for dy in range(-border_width, border_width + 1):
-            if dx != 0 or dy != 0:
-                draw.bitmap((x + dx, y + dy), text_mask, fill=border_color)
+    # Only draw at cardinal and diagonal directions
+    offsets = []
+    for angle in range(0, 360, 45):
+        dx = int(border_width * math.cos(math.radians(angle)))
+        dy = int(border_width * math.sin(math.radians(angle)))
+        offsets.append((dx, dy))
 
-    # Draw the text
+    for dx, dy in offsets:
+        draw.bitmap((x + dx, y + dy), text_mask, fill=border_color)
+
     draw.bitmap((x, y), text_mask, fill=fill)
 
 
@@ -131,7 +133,7 @@ def overlay_text_on_image(image_path, output_image_path, text1, text1_pos, text2
     cv2.destroyAllWindows()
 
 
-def generate_image(suggested_border_rgb, topic, quotes, image_name, text_diff_mult):
+def generate_image(input_image_path, output_image_path, suggested_border_rgb, topic, quotes, text_diff_mult):
 
     clean_texts(quotes)
     text1_pos = (50, 400)
@@ -143,13 +145,13 @@ def generate_image(suggested_border_rgb, topic, quotes, image_name, text_diff_mu
 
     # Example usage
     overlay_text_on_image(
-        '1.base_images/' + image_name,
-        '2.sample_images/' + image_name.split('.')[0] + '.jpeg',
+        input_image_path,
+        output_image_path,
         text1=quotes['text1'],
         text1_pos=text1_pos,
         text2=quotes['text2'],
         text2_pos=(50, text2_y_pos,),
-        font_file='League_Spartan/static/LeagueSpartan-Bold.ttf',
+        font_file='font/League_Spartan/static/LeagueSpartan-Bold.ttf',
         font_sz=36*4,  # Size of the font
         fill=tuple(color),
         border_color=tuple(suggested_border_rgb),
