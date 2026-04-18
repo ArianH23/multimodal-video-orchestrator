@@ -11,6 +11,9 @@ class LocalFileStorageAdapter(StoragePort):
     def save(self, file_path: str, data: bytes) -> str:
         full_path = os.path.join(self.base_directory, file_path)
 
+        target_directory = os.path.dirname(full_path)
+        os.makedirs(target_directory, exist_ok=True)
+
         with open(full_path, 'wb') as file:
             file.write(data)
 
