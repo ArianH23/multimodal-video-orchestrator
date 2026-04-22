@@ -399,6 +399,7 @@ class OpenCVVideoAdapter(VideoRendererPort):
             start_fade_in=6,
             fade_with_voice=True,
             zoom_out_duration=4,
+            starting_corner=spec.starting_corner,
             pause_between_fades=spec.pause_between_fades,
             fps=spec.fps
         )
