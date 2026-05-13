@@ -20,7 +20,7 @@ class GeminiTextAdapter(TextGenerationPort):
         )
         cleaned_response = (
             resp.text
-            .replace("```json", "")
+            .replace("```python", "")
             .replace("```", "")
         )
         cleaned_response = eval(cleaned_response)

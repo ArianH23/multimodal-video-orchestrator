@@ -367,14 +367,42 @@ class OpenCVVideoAdapter(VideoRendererPort):
             import os
             os.rename('temp_video.mp4', output_vid)
 
+    def _calculate_dynamic_y(self, text1: str, font, max_width: int, starting_y: int, border_sz: int) -> int:
+        """Dynamically calculates where text2 should start based on text1's height."""
+        if not text1:
+            return starting_y
+
+        lines = self._wrap_text(text1, font, max_width)
+        line_count = len(lines)
+
+        # Each line takes up the font size + top/bottom borders
+        line_height = 150
+
+        print(line_count)
+
+        return starting_y + (line_count * line_height)
+
     def render_video(self, spec: VideoSpecification) -> str:
         """This replaces your old generate_video function."""
 
         color = spec.color
         border_color = spec.border_color
 
-        text_y_offset = 150 * spec.text_y_offset_mult
         text1_pos = (50, 400)
+
+        font_sz = 36 * 4
+        border_sz = 2
+        max_width = 325 * 4
+
+        font = ImageFont.truetype(self.font_path, font_sz)
+
+        # 2. Use your existing wrap method to find line count
+        lines = self._wrap_text(spec.text1, font, max_width)
+        line_count = len(lines)
+
+        # 3. Calculate dynamic Y position
+        line_height = font_sz + (border_sz * 2)
+        dynamic_y = text1_pos[1] + (line_count * line_height)
 
         self._create_ken_burns_video(
             input_img=spec.image_path,
@@ -384,7 +412,7 @@ class OpenCVVideoAdapter(VideoRendererPort):
             text1=spec.text1,
             text2=spec.text2,
             text1_pos=text1_pos,
-            text2_pos=(50, text1_pos[1] + text_y_offset,),
+            text2_pos=(50, dynamic_y),
             duration=spec.duration,
             audio_file=spec.audio_path,
             font_file=self.font_path,

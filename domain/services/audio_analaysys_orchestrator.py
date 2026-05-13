@@ -8,7 +8,7 @@ class AudioAnalysisService:
     def get_epic_drop_time(self, audio_path: str, video_duration: int, zoom_out_duration: int) -> float:
         print(f"Analyzing audio waveform for: {audio_path}")
 
-        minimum_buildup_time = 8.0
+        minimum_buildup_time = 10
 
         # Calculate how much audio we need AFTER the drop.
         # If the video is 12s + 4s zoom out, and the drop happens at 8s,

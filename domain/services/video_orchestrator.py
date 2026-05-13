@@ -1,4 +1,3 @@
-import os
 from domain.ports.video_renderer import VideoRendererPort
 from domain.ports.storage import StoragePort
 from domain.models.video_spec import VideoSpecification
@@ -6,7 +5,6 @@ from domain.models.video_spec import VideoSpecification
 
 class VideoOrchestratorService:
     def __init__(self, video_renderer: VideoRendererPort, storage: StoragePort):
-        # Inject BOTH ports
         self.video_renderer = video_renderer
         self.storage = storage
 
@@ -33,8 +31,8 @@ class VideoOrchestratorService:
             epic_part_of_audio=epic_part_of_audio,
             color=color,
             border_color=border_color,
-            pause_between_fades=pause_between_fades,
-            text_y_offset_mult=text_y_offset_mult
+            pause_between_fades=pause_between_fades
+            # text_y_offset_mult=text_y_offset_mult
         )
 
         rendered_temp_path = self.video_renderer.render_video(spec)

@@ -1,7 +1,5 @@
 import cv2
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-import json
 import math
 
 from domain.ports.image_renderer import ImageRendererPort
@@ -95,3 +93,33 @@ class OpenCVImageAdapter(ImageRendererPort):
         pil_image.save(spec.output_path)
 
         return spec.output_path
+
+
+def calculate_dynamic_y_shift(text1: str, font_path: str, font_sz: int, border_sz: int, max_width: int,
+                              starting_y: int = 400) -> int:
+    font = ImageFont.truetype(font_file=font_path, size=font_sz)
+
+    lines = []
+    words = text1.split()
+    line = []
+    for word in words:
+        test_line = ' '.join(line + [word])
+        bbox = font.getbbox(test_line)
+        if bbox[2] - bbox[0] <= max_width:
+            line.append(word)
+        else:
+            lines.append(' '.join(line))
+            line = [word]
+    if line:
+        lines.append(' '.join(line))
+
+    line_count = len(lines)
+
+    line_height = font_sz + (border_sz * 2)
+
+    padding_between_quotes = 50
+
+    total_height_of_text1 = line_count * line_height
+    new_y_position = starting_y + total_height_of_text1 + padding_between_quotes
+
+    return new_y_position

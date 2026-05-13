@@ -17,5 +17,5 @@ class VideoSpecification:
     start_fade_in: int
     epic_part_of_audio: int
     pause_between_fades: int
-    text_y_offset_mult: int
+    # text_y_offset_mult: int
 
