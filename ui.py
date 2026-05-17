@@ -37,13 +37,15 @@ from domain.services.trends_orchestrator import TrendOrchestratorService
 def load_services():
     dotenv.load_dotenv()
 
-    gemini_api_key = os.getenv('API_KEY_BILLED')
+    gemini_api_key = os.getenv('API_KEY')
     elevenlabs_api_key = os.getenv("XI_API_KEY")
     spanish_voice_id = os.getenv('SPANISH_VOICE_ID')
     tavily_api_key = os.getenv("TAVILY_API_KEY")
+    suno_api_key = os.getenv("SUNO_API_KEY")
     embedding_model = os.getenv("EMBEDDING_MODEL")
     llm_model = os.getenv("LLM_MODEL")
     image_model = os.getenv("IMAGE_MODEL")
+    suno_model = os.getenv("SUNO_MODEL")
 
     font = 'font/League_Spartan/static/LeagueSpartan-Bold.ttf'
     logo = 'data/logo/logo.png'
@@ -60,7 +62,7 @@ def load_services():
     gemini_text_adapter = GeminiTextAdapter(gemini_api_key, llm_model)
     gemini_image_adapter = GeminiImageAdapter(gemini_api_key, image_model)
     voice_adapter = ElevenLabsVoiceAdapter(api_key=elevenlabs_api_key, voice_id=spanish_voice_id)
-    suno_adapter = SunoMusicAdapter(os.getenv("SUNO_API_KEY"), "V4_5PLUS")
+    suno_adapter = SunoMusicAdapter(os.getenv(suno_api_key), suno_model)
 
     # Services
     return {
@@ -85,9 +87,9 @@ services = load_services()
 if 'step' not in st.session_state:
     st.session_state.step = 1
 if 'final_selections' not in st.session_state:
-    st.session_state.final_selections = {}  # Maps topic_name -> selected_image_path
+    st.session_state.final_selections = {}
 if 'corner_selections' not in st.session_state:
-    st.session_state.corner_selections = {}  # Maps topic_name -> starting_corner string
+    st.session_state.corner_selections = {}
 if 'current_topic_idx' not in st.session_state:
     st.session_state.current_topic_idx = 0
 
@@ -97,8 +99,8 @@ def reset():
     st.rerun()
 
 
-st.set_page_config(page_title="Visionary Whispers Studio", layout="wide")
-st.title("🎬 Visionary Whispers Multi-Topic Studio")
+st.set_page_config(page_title="Multimodal Video Studio", layout="wide")
+st.title("🎬 Multi-Topic Studio")
 
 # ==========================================
 # STEP 1: GENERATE & SELECT TOPICS
@@ -173,23 +175,27 @@ elif st.session_state.step == 2:
     state_key_2 = f"img2_{current_topic}"
 
     if state_key_1 not in st.session_state:
-        if st.button(f"🎨 Generate 2 Images for {current_topic}"):
-            with st.spinner("Gemini is drawing..."):
-                prompt1 = topic_data['image_prompts'][0]
-                prompt2 = topic_data['image_prompts'][1]
+        with st.spinner(f"🎨 Auto-generating 2 images for {current_topic}..."):
+            prompt1 = topic_data['image_prompts'][0]
+            prompt2 = topic_data['image_prompts'][1]
 
-                path1 = f"data/images/current/{current_topic}_1.png"
-                path2 = f"data/images/current/{current_topic}_2.png"
+            path1 = f"data/images/current/{current_topic}_1.png"
+            path2 = f"data/images/current/{current_topic}_2.png"
 
-                st.session_state[state_key_1] = services["image_generator"].generate(prompt1, path1)
-                st.session_state[state_key_2] = services["image_generator"].generate(prompt2, path2)
-                st.rerun()
+            st.session_state[state_key_1] = services["image_generator"].generate(prompt1, path1)
+            st.session_state[state_key_2] = services["image_generator"].generate(prompt2, path2)
+            st.rerun()
     else:
-        # --- NEW: Corner Configuration ---
         st.subheader("🎥 Video Configuration")
+
+        # Pre-fill with existing choice if the user went "back"
+        existing_corner = st.session_state.corner_selections.get(current_topic, "BR")
+        corner_options = ["BR", "BL", "TR", "TL"]
+
         corner_choice = st.selectbox(
             "Select Ken Burns Starting Corner:",
-            options=["BR", "BL", "TR", "TL"],
+            options=corner_options,
+            index=corner_options.index(existing_corner),
             format_func=lambda x: {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left"}[x],
             key=f"corner_{current_topic}"
         )
@@ -197,8 +203,9 @@ elif st.session_state.step == 2:
         st.markdown("---")
         st.subheader("🖼️ Image Selection")
         col1, col2 = st.columns(2)
+
         with col1:
-            st.image(st.session_state[state_key_1], caption="Option A")
+            st.image(st.session_state[state_key_1], caption="Option A", width=350)
             if st.button("✅ Select Option A", key=f"btnA_{current_topic}", use_container_width=True):
                 st.session_state.final_selections[current_topic] = st.session_state[state_key_1]
                 st.session_state.corner_selections[current_topic] = corner_choice
@@ -206,7 +213,7 @@ elif st.session_state.step == 2:
                 st.rerun()
 
         with col2:
-            st.image(st.session_state[state_key_2], caption="Option B")
+            st.image(st.session_state[state_key_2], caption="Option B", width=350)
             if st.button("✅ Select Option B", key=f"btnB_{current_topic}", use_container_width=True):
                 st.session_state.final_selections[current_topic] = st.session_state[state_key_2]
                 st.session_state.corner_selections[current_topic] = corner_choice
@@ -214,21 +221,27 @@ elif st.session_state.step == 2:
                 st.rerun()
 
         st.markdown("---")
-        st.subheader("🛠️ Overrides")
-        col_regen, col_skip = st.columns(2)
+        st.subheader("🛠️ Navigation & Overrides")
+        # --- NEW: Added col_prev for going backward ---
+        col_prev, col_regen, col_skip = st.columns(3)
 
-        # --- NEW: Regenerate Button ---
+        with col_prev:
+            if st.session_state.current_topic_idx > 0:
+                if st.button("⬅️ Previous Topic", key=f"prev_{current_topic}"):
+                    st.session_state.current_topic_idx -= 1
+                    st.rerun()
+
         with col_regen:
             if st.button("🔄 Regenerate Images", key=f"regen_{current_topic}"):
-                # Delete the current images from state to force a re-generation
                 del st.session_state[state_key_1]
                 del st.session_state[state_key_2]
                 st.rerun()
 
-        # --- NEW: Skip Button ---
         with col_skip:
             if st.button("⏭️ Skip this Topic", type="secondary", key=f"skip_{current_topic}"):
-                # Increment counter WITHOUT adding to final_selections
+                if current_topic in st.session_state.final_selections:
+                    del st.session_state.final_selections[current_topic]
+
                 st.session_state.current_topic_idx += 1
                 st.rerun()
 
@@ -243,15 +256,41 @@ elif st.session_state.step == 3:
         if st.button("Start Over"):
             reset()
     else:
-        st.success("Images selected! Ready to process the batch.")
+        st.success("All selections complete! Review your batch below.")
 
-        st.write("Topics in queue:")
+        st.markdown("### 📝 Review & Finalize Configurations")
+
+        # --- NEW: Image Thumbnails and Final Corner Edit Loop ---
         for topic, img_path in st.session_state.final_selections.items():
-            corner_label = {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left"}[
-                st.session_state.corner_selections[topic]]
-            st.write(f"- **{topic}** (Start Corner: {corner_label})")
+            st.markdown("---")
+            col_img, col_cfg = st.columns([1, 4])
 
-        if st.button("🎬 RUN FULL BATCH GENERATION", type="primary"):
+            with col_img:
+                st.image(img_path, width=150)  # Show a small thumbnail
+
+            with col_cfg:
+                st.markdown(f"#### **{topic}**")
+
+                # Retrieve the previously selected corner to set as default
+                current_corner = st.session_state.corner_selections.get(topic, "BR")
+                corner_opts = ["BR", "BL", "TR", "TL"]
+
+                # Create a dynamic selectbox for last-minute edits
+                new_corner = st.selectbox(
+                    f"Start Corner:",
+                    options=corner_opts,
+                    index=corner_opts.index(current_corner),
+                    format_func=lambda x:
+                    {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left"}[x],
+                    key=f"final_corner_{topic}"
+                )
+
+                # Update the state dynamically so the batch processor reads the new choice
+                st.session_state.corner_selections[topic] = new_corner
+
+        st.markdown("---")
+
+        if st.button("🎬 RUN FULL BATCH GENERATION", type="primary", use_container_width=True):
             progress_bar = st.progress(0.0)
             total_topics = len(st.session_state.final_selections)
 
@@ -260,6 +299,7 @@ elif st.session_state.step == 3:
                     try:
                         topic_data = st.session_state.my_dict[topic]
                         font_rgb = topic_data['font_rgb']
+                        # Will read the final corner selection chosen in the dashboard above
                         chosen_corner = st.session_state.corner_selections[topic]
 
                         # 1. Generate Quotes
