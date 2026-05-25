@@ -22,77 +22,86 @@ CORNERS_ENUMS = {
     "BL": (0, 1),
     "TL": (0, 0),
     "BR": (1, 1),
+    "CR": (0.5, 0.6),
+    "CD": (0.4, 0.5),
 }
-
 
 _text_cache = None
 _current_shm_name = None
+
+
+def process_frame_with_shm(frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                            start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                            end_fade_frame, overlay_image, overlay_width, overlay_height,
+                            duration, queue, shm_name, cache_size):
+    global _text_cache, _current_shm_name
+
+    # Load cache from shared memory (only once per worker)
+    if _text_cache is None or _current_shm_name != shm_name:
+        shm = shared_memory.SharedMemory(name=shm_name)
+        cache_bytes = bytes(shm.buf[:cache_size])
+        _text_cache = pickle.loads(cache_bytes)
+        _current_shm_name = shm_name
+        shm.close()  # Don't unlink, just close our handle
+
+    # Ken Burns zoom logic
+    if frame_num < total_frames - zoom_out_duration * fps:
+        linear_progress = frame_num / ((total_frames) - zoom_out_duration * fps)
+
+        progress = linear_progress * linear_progress * (3.0 - 2.0 * linear_progress)
+
+        zoom = start_zoom + (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        resized_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (start_pt[0] + (end_pt[0] - start_pt[0]) * progress))
+        crop_y = int((new_h - h) * (start_pt[1] + (end_pt[1] - start_pt[1]) * progress))
+        cropped_img = resized_img[crop_y:crop_y + h, crop_x:crop_x + w]
+
+    else:
+        linear_progress = (frame_num - duration * fps) / (zoom_out_duration * fps)
+
+        progress = linear_progress * linear_progress * (3.0 - 2.0 * linear_progress)
+
+        zoom = end_zoom - (end_zoom - start_zoom) * progress
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
+        cropped_img = cv2.resize(img, (new_w, new_h))
+        crop_x = int((new_w - w) * (end_pt[0] + (-end_pt[0]) * progress))
+        crop_y = int((new_h - h) * (end_pt[1] + (-end_pt[1]) * progress))
+        cropped_img = cropped_img[crop_y:crop_y + h, crop_x:crop_x + w]
+
+    # Convert to PIL
+    pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
+
+    # Grab pre-rendered text from LOCAL cache (loaded from shared memory)
+    if frame_num < start_fade_frame:
+        text_layer_np = _text_cache['text1_only']
+    elif frame_num >= end_fade_frame:
+        text_layer_np = _text_cache['both_texts']
+    else:
+        fade_index = int(frame_num - start_fade_frame)
+        text_layer_np = _text_cache['fade_frames'][fade_index]
+
+    # Composite
+    text_layer = Image.fromarray(text_layer_np)
+    pil_image = Image.alpha_composite(pil_image, text_layer)
+
+    if overlay_image:
+        x_position = w - overlay_width - 50
+        y_position = h - overlay_height - 10
+        pil_image.paste(overlay_image, (x_position, y_position), overlay_image)
+
+    cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+    queue.put(1)
+    return frame_num, cropped_img
 
 
 class OpenCVVideoAdapter(VideoRendererPort):
     def __init__(self, font_path: str, logo_path: str):
         self.font_path = font_path
         self.logo_path = logo_path
-
-    def _process_frame_with_shm(self, frame_num, total_frames, zoom_out_duration, fps, w, h, img,
-                                start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
-                                end_fade_frame, overlay_image, overlay_width, overlay_height,
-                                duration, queue, shm_name, cache_size):
-        global _text_cache, _current_shm_name
-
-        # Load cache from shared memory (only once per worker)
-        if _text_cache is None or _current_shm_name != shm_name:
-            shm = shared_memory.SharedMemory(name=shm_name)
-            cache_bytes = bytes(shm.buf[:cache_size])
-            _text_cache = pickle.loads(cache_bytes)
-            _current_shm_name = shm_name
-            shm.close()  # Don't unlink, just close our handle
-
-        # Ken Burns zoom logic
-        if frame_num < total_frames - zoom_out_duration * fps:
-            progress = frame_num / ((total_frames) - zoom_out_duration * fps)
-            zoom = start_zoom + (end_zoom - start_zoom) * progress
-            new_w = int(w * zoom)
-            new_h = int(h * zoom)
-            resized_img = cv2.resize(img, (new_w, new_h))
-            crop_x = int((new_w - w) * (start_pt[0] + (end_pt[0] - start_pt[0]) * progress))
-            crop_y = int((new_h - h) * (start_pt[1] + (end_pt[1] - start_pt[1]) * progress))
-            cropped_img = resized_img[crop_y:crop_y + h, crop_x:crop_x + w]
-        else:
-            progress = (frame_num - duration * fps) / (zoom_out_duration * fps)
-            zoom = end_zoom - (end_zoom - start_zoom) * progress
-            new_w = int(w * zoom)
-            new_h = int(h * zoom)
-            cropped_img = cv2.resize(img, (new_w, new_h))
-            crop_x = int((new_w - w) * (end_pt[0] + (-end_pt[0]) * progress))
-            crop_y = int((new_h - h) * (end_pt[1] + (-end_pt[1]) * progress))
-            cropped_img = cropped_img[crop_y:crop_y + h, crop_x:crop_x + w]
-
-        # Convert to PIL
-        pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
-
-        # Grab pre-rendered text from LOCAL cache (loaded from shared memory)
-        if frame_num < start_fade_frame:
-            text_layer_np = _text_cache['text1_only']
-        elif frame_num >= end_fade_frame:
-            text_layer_np = _text_cache['both_texts']
-        else:
-            fade_index = int(frame_num - start_fade_frame)
-            text_layer_np = _text_cache['fade_frames'][fade_index]
-
-        # Composite
-        text_layer = Image.fromarray(text_layer_np)
-        pil_image = Image.alpha_composite(pil_image, text_layer)
-
-        if overlay_image:
-            x_position = w - overlay_width - 50
-            y_position = h - overlay_height - 10
-            pil_image.paste(overlay_image, (x_position, y_position), overlay_image)
-
-        cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
-
-        queue.put(1)
-        return frame_num, cropped_img
 
     def _wrap_text(self, text, font, max_width):
         lines = []
@@ -215,7 +224,10 @@ class OpenCVVideoAdapter(VideoRendererPort):
                                 starting_corner='BL',
                                 pause_between_fades=0.5):
         start_pt = CORNERS_ENUMS[starting_corner]
-        end_pt = tuple(1 - x for x in start_pt)
+        if starting_corner in ["CR", "CD"]:
+            end_pt = (0.5, 0.5)
+        else:
+            end_pt = tuple(1 - x for x in start_pt)
 
         img = cv2.imread(input_img, cv2.IMREAD_UNCHANGED)
         img = cv2.resize(img, (new_width, new_height))
@@ -319,7 +331,7 @@ class OpenCVVideoAdapter(VideoRendererPort):
             with ProcessPoolExecutor(max_workers=2) as executor:
                 futures = {
                     executor.submit(
-                        self._process_frame_with_shm,  # New function
+                        process_frame_with_shm,  # New function
                         frame_num, total_frames, zoom_out_duration, fps, w, h, img,
                         start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
                         end_fade_frame, overlay_image, overlay_width, overlay_height,
@@ -419,7 +431,7 @@ class OpenCVVideoAdapter(VideoRendererPort):
             color=tuple(color),
             border_color=tuple(border_color),
             border_sz=2,
-            font_sz=36*4,
+            font_sz=36 * 4,
             max_width=325 * 4,
             epic_part_of_audio=spec.epic_part_of_audio,
             overlay_image_path=self.logo_path,

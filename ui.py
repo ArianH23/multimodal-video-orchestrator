@@ -62,7 +62,7 @@ def load_services():
     gemini_text_adapter = GeminiTextAdapter(gemini_api_key, llm_model)
     gemini_image_adapter = GeminiImageAdapter(gemini_api_key, image_model)
     voice_adapter = ElevenLabsVoiceAdapter(api_key=elevenlabs_api_key, voice_id=spanish_voice_id)
-    suno_adapter = SunoMusicAdapter(os.getenv(suno_api_key), suno_model)
+    suno_adapter = SunoMusicAdapter(suno_api_key, suno_model)
 
     # Services
     return {
@@ -110,140 +110,263 @@ if st.session_state.step == 1:
 
     col1, col2 = st.columns(2)
     with col1:
-        strategy = st.radio("Strategy:", ["AI Trending (Tavily)", "Random Roulette", "Manual Override"])
-        limit = st.slider("Max topics to fetch", 1, 10, 5)
-        manual_topics = st.text_input("Manual Topics (comma separated, if override):", "Disciplina, Fuerza")
+        # --- NEW: Added 'Bring Your Own Images' to the strategy list ---
+        strategy = st.radio("Strategy:",
+                            ["AI Trending (Tavily)", "Random Roulette", "Manual Override", "Bring Your Own Images"])
 
-    if st.button("🔍 Fetch Topics from Database"):
-        with st.spinner("Fetching..."):
-            if strategy == "AI Trending (Tavily)":
-                raw_topics_str = services["orchestrator"].generate_trending_video_topics(limit=limit)
-            elif strategy == "Random Roulette":
-                raw_topics_str = services["orchestrator"].generate_random_video_topics(limit=limit)
-            else:
-                topics_list = [t.strip() for t in manual_topics.split(',')]
-                raw_topics_str = services["orchestrator"].generate_explicit_video_topics(target_topics=topics_list)
+        if strategy != "Bring Your Own Images":
+            limit = st.slider("Max topics to fetch", 1, 10, 5)
+            manual_topics = st.text_input("Manual Topics (comma separated, if override):", "Disciplina, Fuerza")
 
-            st.session_state.raw_topics_str = raw_topics_str
-            st.rerun()
-
-    if 'raw_topics_str' in st.session_state:
+    # ==========================================
+    # BRANCH A: MANUAL IMAGE UPLOAD
+    # ==========================================
+    if strategy == "Bring Your Own Images":
         st.markdown("---")
-        st.subheader("Available Topics Found:")
+        st.subheader("📸 Upload Your Visuals")
+        uploaded_files = st.file_uploader("Upload 9:16 portrait images (PNG/JPG)", accept_multiple_files=True,
+                                          type=['png', 'jpg', 'jpeg'])
 
-        topic_lines = [line for line in st.session_state.raw_topics_str.split('\n') if line.strip()]
-        topic_names = [line.split(':')[0].strip() for line in topic_lines]
+        if uploaded_files:
+            st.markdown("### Configure Uploaded Images")
+            manual_configs = []
 
-        selected_topic_names = st.multiselect(
-            "Select the topics you want to generate videos for today:",
-            options=topic_names,
-            default=topic_names
-        )
+            # Display a mini-dashboard to configure each uploaded image
+            for idx, uf in enumerate(uploaded_files):
+                col_img, col_cfg = st.columns([1, 3])
+                with col_img:
+                    st.image(uf, width=150)
+                with col_cfg:
+                    t_name = st.text_input(f"Topic Name for Image {idx + 1}", key=f"man_top_{idx}")
+                    c_choice = st.selectbox(f"Start Corner for Image {idx + 1}", ["BR", "BL", "TR", "TL", "CR", "CD"],
+                                            format_func=lambda x:
+                                            {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right",
+                                             "TL": "Top Left", "CR": "Center Rise", "CD": "Center Drift"}[x], key=f"man_corn_{idx}")
+                    manual_configs.append((uf, t_name, c_choice))
+                st.markdown("---")
 
-        if st.button("🚀 Generate Prompts for Selected Topics", type="primary"):
-            if not selected_topic_names:
-                st.error("Please select at least one topic.")
-            else:
-                with st.spinner("Asking Gemini to generate image prompts and colors..."):
-                    filtered_lines = [line for line in topic_lines if
-                                      line.split(':')[0].strip() in selected_topic_names]
-                    filtered_topics_str = "\n".join(filtered_lines)
+            if st.button("🚀 Process Uploaded Images (Skip to Render)", type="primary"):
+                # 1. Validation to ensure no blank or duplicate topics
+                valid = True
+                topics_seen = set()
+                target_topics = []
 
-                    prompt_template = services["storer"].retrieve('data/prompts/generate_content.txt').decode('utf-8')
-                    final_prompt = prompt_template.format(topics_color=filtered_topics_str)
+                for uf, t, c in manual_configs:
+                    safe_topic = t.strip()
+                    if not safe_topic:
+                        st.error("❌ Please provide a topic name for all images.")
+                        valid = False
+                        break
+                    if safe_topic in topics_seen:
+                        st.error(f"❌ Topic '{safe_topic}' is duplicated. Topics must be unique.")
+                        valid = False
+                        break
+                    topics_seen.add(safe_topic)
+                    target_topics.append(safe_topic)  # Collect topics to query ChromaDB
 
-                    st.session_state.my_dict = services["content_generator"].generate(final_prompt)
-                    st.session_state.topics_to_process = list(st.session_state.my_dict.keys())
-                    st.session_state.step = 2
-                    st.rerun()
+                if valid:
+                    with st.spinner("Fetching brand colors from ChromaDB and preparing pipeline..."):
+                        # Clear old state completely
+                        st.session_state.my_dict = {}
+                        st.session_state.final_selections = {}
+                        st.session_state.corner_selections = {}
+
+                        # --- NEW: Ask the orchestrator to fetch the exact topics from ChromaDB ---
+                        raw_topics_str = services["orchestrator"].generate_explicit_video_topics(
+                            target_topics=target_topics)
+
+                        # Parse the returned string (e.g., "Disciplina: [255, 255, 255]") into a mapping dictionary
+                        color_mapping = {}
+                        if raw_topics_str:
+                            for line in raw_topics_str.split('\n'):
+                                if ':' in line:
+                                    parts = line.split(':', 1)
+                                    topic_name = parts[0].strip()
+                                    color_str = parts[1].strip()
+                                    color_mapping[topic_name] = color_str
+
+                        # Process each image manually
+                        for uf, t, c in manual_configs:
+                            safe_topic = t.strip()
+                            path = f"data/images/current/{safe_topic}_manual.png"
+
+                            # Save the file bytes directly
+                            services["storer"].save(path, uf.getvalue())
+
+                            # --- NEW: Retrieve the specific ChromaDB color, fallback to white if not found ---
+                            actual_color = color_mapping.get(safe_topic, "[255, 255, 255]")
+
+                            # Create the dictionary so Step 3 uses the correct font_rgb
+                            st.session_state.my_dict[safe_topic] = {"font_rgb": actual_color}
+                            st.session_state.final_selections[safe_topic] = path
+                            st.session_state.corner_selections[safe_topic] = c
+
+                        # Jump directly to Step 3!
+                        st.session_state.step = 3
+                        st.rerun()
+
+    # ==========================================
+    # BRANCH B: STANDARD AI PIPELINE
+    # ==========================================
+    else:
+        if st.button("🔍 Fetch Topics from Database"):
+            # --- FIX: Aggressively clear old state when fetching new topics ---
+            st.session_state.pop('raw_topics_str', None)
+            st.session_state.pop('my_dict', None)
+            st.session_state.pop('topics_to_process', None)
+            st.session_state.final_selections = {}
+            st.session_state.corner_selections = {}
+            st.session_state.current_topic_idx = 0
+
+            with st.spinner("Fetching..."):
+                if strategy == "AI Trending (Tavily)":
+                    raw_topics_str = services["orchestrator"].generate_trending_video_topics(limit=limit)
+                elif strategy == "Random Roulette":
+                    raw_topics_str = services["orchestrator"].generate_random_video_topics(limit=limit)
+                else:
+                    topics_list = [t.strip() for t in manual_topics.split(',')]
+                    raw_topics_str = services["orchestrator"].generate_explicit_video_topics(target_topics=topics_list)
+
+                st.session_state.raw_topics_str = raw_topics_str
+                st.rerun()
+
+        if 'raw_topics_str' in st.session_state:
+            st.markdown("---")
+            st.subheader("Available Topics Found:")
+
+            topic_lines = [line for line in st.session_state.raw_topics_str.split('\n') if line.strip()]
+            topic_names = [line.split(':')[0].strip() for line in topic_lines]
+
+            selected_topic_names = st.multiselect(
+                "Select the topics you want to generate videos for today:",
+                options=topic_names,
+                default=topic_names
+            )
+
+            if st.button("🚀 Generate Prompts for Selected Topics", type="primary"):
+                if not selected_topic_names:
+                    st.error("Please select at least one topic.")
+                else:
+                    with st.spinner("Asking Gemini to generate image prompts and colors..."):
+                        filtered_lines = [line for line in topic_lines if
+                                          line.split(':')[0].strip() in selected_topic_names]
+                        filtered_topics_str = "\n".join(filtered_lines)
+
+                        prompt_template = services["storer"].retrieve('data/prompts/generate_content.txt').decode(
+                            'utf-8')
+                        final_prompt = prompt_template.format(topics_color=filtered_topics_str)
+
+                        raw_dict = services["content_generator"].generate(final_prompt)
+
+                        # --- FIX: The Bouncer. Strictly filter out hallucinated topics ---
+                        st.session_state.my_dict = {
+                            k: v for k, v in raw_dict.items() if k in selected_topic_names
+                        }
+
+                        if not st.session_state.my_dict:
+                            st.error("Gemini failed to process the specific topics requested. Please try again.")
+                        else:
+                            st.session_state.topics_to_process = list(st.session_state.my_dict.keys())
+                            st.session_state.step = 2
+                            st.rerun()
 
 # ==========================================
-# STEP 2: IMAGE GENERATION & SELECTION LOOP
+# STEP 2: BATCH IMAGE GENERATION & GALLERY SELECTION
 # ==========================================
 elif st.session_state.step == 2:
-    if st.session_state.current_topic_idx >= len(st.session_state.topics_to_process):
-        st.session_state.step = 3
-        st.rerun()
+    st.header("Step 2: Visual Selection Gallery")
 
-    current_topic = st.session_state.topics_to_process[st.session_state.current_topic_idx]
-    topic_data = st.session_state.my_dict[current_topic]
+    # --- 1. THE BATCH GENERATOR ---
+    # We use a progress bar to show the user that we are generating all images upfront.
+    if 'images_generated' not in st.session_state:
+        st.session_state.images_generated = False
 
-    st.header(f"Step 2: Visuals for '{current_topic}'")
-    st.progress(st.session_state.current_topic_idx / len(st.session_state.topics_to_process))
+    if not st.session_state.images_generated:
+        st.markdown("### 🎨 Batch Generating Images...")
+        progress_bar = st.progress(0.0)
+        total = len(st.session_state.topics_to_process)
 
-    state_key_1 = f"img1_{current_topic}"
-    state_key_2 = f"img2_{current_topic}"
+        for idx, topic in enumerate(st.session_state.topics_to_process):
+            state_key_1 = f"img1_{topic}"
+            state_key_2 = f"img2_{topic}"
 
-    if state_key_1 not in st.session_state:
-        with st.spinner(f"🎨 Auto-generating 2 images for {current_topic}..."):
-            prompt1 = topic_data['image_prompts'][0]
-            prompt2 = topic_data['image_prompts'][1]
+            # Only generate if they don't exist yet (allows for targeted regenerations later)
+            if state_key_1 not in st.session_state or state_key_2 not in st.session_state:
+                with st.spinner(f"Generating 2 concepts for '{topic}'..."):
+                    topic_data = st.session_state.my_dict[topic]
+                    prompt1 = topic_data['image_prompts'][0]
+                    prompt2 = topic_data['image_prompts'][1]
 
-            path1 = f"data/images/current/{current_topic}_1.png"
-            path2 = f"data/images/current/{current_topic}_2.png"
+                    path1 = f"data/images/current/{topic}_1.png"
+                    path2 = f"data/images/current/{topic}_2.png"
 
-            st.session_state[state_key_1] = services["image_generator"].generate(prompt1, path1)
-            st.session_state[state_key_2] = services["image_generator"].generate(prompt2, path2)
-            st.rerun()
-    else:
-        st.subheader("🎥 Video Configuration")
+                    st.session_state[state_key_1] = services["image_generator"].generate(prompt1, path1)
+                    st.session_state[state_key_2] = services["image_generator"].generate(prompt2, path2)
 
-        # Pre-fill with existing choice if the user went "back"
-        existing_corner = st.session_state.corner_selections.get(current_topic, "BR")
-        corner_options = ["BR", "BL", "TR", "TL"]
+            progress_bar.progress((idx + 1) / total)
 
-        corner_choice = st.selectbox(
-            "Select Ken Burns Starting Corner:",
-            options=corner_options,
-            index=corner_options.index(existing_corner),
-            format_func=lambda x: {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left"}[x],
-            key=f"corner_{current_topic}"
-        )
+        st.session_state.images_generated = True
+        st.rerun()  # Refresh the page to show the gallery
 
-        st.markdown("---")
-        st.subheader("🖼️ Image Selection")
-        col1, col2 = st.columns(2)
+    # --- 2. THE GALLERY DASHBOARD ---
+    if st.session_state.images_generated:
+        st.success("All images generated! Please make your selections below.")
 
-        with col1:
-            st.image(st.session_state[state_key_1], caption="Option A", width=350)
-            if st.button("✅ Select Option A", key=f"btnA_{current_topic}", use_container_width=True):
-                st.session_state.final_selections[current_topic] = st.session_state[state_key_1]
-                st.session_state.corner_selections[current_topic] = corner_choice
-                st.session_state.current_topic_idx += 1
-                st.rerun()
+        # We will collect the user's choices in this dictionary before saving to the final state
+        temp_selections = {}
 
-        with col2:
-            st.image(st.session_state[state_key_2], caption="Option B", width=350)
-            if st.button("✅ Select Option B", key=f"btnB_{current_topic}", use_container_width=True):
-                st.session_state.final_selections[current_topic] = st.session_state[state_key_2]
-                st.session_state.corner_selections[current_topic] = corner_choice
-                st.session_state.current_topic_idx += 1
-                st.rerun()
+        for topic in st.session_state.topics_to_process:
+            st.markdown("---")
+            st.subheader(f"Topic: {topic}")
 
-        st.markdown("---")
-        st.subheader("🛠️ Navigation & Overrides")
-        # --- NEW: Added col_prev for going backward ---
-        col_prev, col_regen, col_skip = st.columns(3)
+            state_key_1 = f"img1_{topic}"
+            state_key_2 = f"img2_{topic}"
 
-        with col_prev:
-            if st.session_state.current_topic_idx > 0:
-                if st.button("⬅️ Previous Topic", key=f"prev_{current_topic}"):
-                    st.session_state.current_topic_idx -= 1
+            # Create a 3-column layout: Option A | Option B | Controls
+            colA, colB, colC = st.columns([1, 1, 1.5])
+
+            with colA:
+                st.image(st.session_state[state_key_1], caption="Option A", width=250)
+            with colB:
+                st.image(st.session_state[state_key_2], caption="Option B", width=250)
+
+            with colC:
+                st.markdown("#### Action")
+                # Use a radio button for the selection logic
+                choice = st.radio(
+                    "Select an option for this topic:",
+                    ["Option A", "Option B", "Skip this Topic"],
+                    key=f"radio_{topic}",
+                    index=0
+                )
+                temp_selections[topic] = choice
+
+                # Targeted Regeneration Button
+                if st.button(f"🔄 Regenerate images for {topic}", key=f"regen_{topic}"):
+                    del st.session_state[state_key_1]
+                    del st.session_state[state_key_2]
+                    st.session_state.images_generated = False  # Force the generator loop to run again
                     st.rerun()
 
-        with col_regen:
-            if st.button("🔄 Regenerate Images", key=f"regen_{current_topic}"):
-                del st.session_state[state_key_1]
-                del st.session_state[state_key_2]
-                st.rerun()
+        st.markdown("---")
 
-        with col_skip:
-            if st.button("⏭️ Skip this Topic", type="secondary", key=f"skip_{current_topic}"):
-                if current_topic in st.session_state.final_selections:
-                    del st.session_state.final_selections[current_topic]
+        # --- 3. FINAL CONFIRMATION BUTTON ---
+        if st.button("✅ Confirm All Selections & Proceed to Render Settings", type="primary", use_container_width=True):
+            # Process the temporary selections into the final state
+            st.session_state.final_selections = {}
+            st.session_state.corner_selections = {}
 
-                st.session_state.current_topic_idx += 1
-                st.rerun()
+            for topic, choice in temp_selections.items():
+                if choice == "Option A":
+                    st.session_state.final_selections[topic] = st.session_state[f"img1_{topic}"]
+                    st.session_state.corner_selections[topic] = "BR"  # Default, can be changed in Step 3
+                elif choice == "Option B":
+                    st.session_state.final_selections[topic] = st.session_state[f"img2_{topic}"]
+                    st.session_state.corner_selections[topic] = "BR"  # Default
+                # If "Skip", we just don't add it to final_selections
+
+            st.session_state.step = 3
+            st.rerun()
 
 # ==========================================
 # STEP 3: FINAL PIPELINE EXECUTION
@@ -260,32 +383,28 @@ elif st.session_state.step == 3:
 
         st.markdown("### 📝 Review & Finalize Configurations")
 
-        # --- NEW: Image Thumbnails and Final Corner Edit Loop ---
         for topic, img_path in st.session_state.final_selections.items():
             st.markdown("---")
             col_img, col_cfg = st.columns([1, 4])
 
             with col_img:
-                st.image(img_path, width=150)  # Show a small thumbnail
+                st.image(img_path, width=150)
 
             with col_cfg:
                 st.markdown(f"#### **{topic}**")
 
-                # Retrieve the previously selected corner to set as default
                 current_corner = st.session_state.corner_selections.get(topic, "BR")
-                corner_opts = ["BR", "BL", "TR", "TL"]
+                corner_opts = ["BR", "BL", "TR", "TL", "CR", "CD"]
 
-                # Create a dynamic selectbox for last-minute edits
                 new_corner = st.selectbox(
                     f"Start Corner:",
                     options=corner_opts,
                     index=corner_opts.index(current_corner),
                     format_func=lambda x:
-                    {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left"}[x],
+                    {"BR": "Bottom Right", "BL": "Bottom Left", "TR": "Top Right", "TL": "Top Left", "CR": "Center Rise", "CD": "Center Drift"}[x],
                     key=f"final_corner_{topic}"
                 )
 
-                # Update the state dynamically so the batch processor reads the new choice
                 st.session_state.corner_selections[topic] = new_corner
 
         st.markdown("---")
@@ -299,7 +418,6 @@ elif st.session_state.step == 3:
                     try:
                         topic_data = st.session_state.my_dict[topic]
                         font_rgb = topic_data['font_rgb']
-                        # Will read the final corner selection chosen in the dashboard above
                         chosen_corner = st.session_state.corner_selections[topic]
 
                         # 1. Generate Quotes
