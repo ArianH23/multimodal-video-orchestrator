@@ -7,7 +7,7 @@ This repository houses an end-to-end, multi-modal generative AI pipeline designe
 
 Rather than a simple linear script, this system is built on strict **Hexagonal Architecture (Ports and Adapters)**, featuring a Human-in-the-Loop (HITL) Streamlit state machine that orchestrates 5 different AI models and APIs simultaneously.
 
-*(Space reserved for future Architecture Diagram)*
+![Pipeline architecture](docs/diagram.svg)
 
 ## 🏗️ Architecture & Design Patterns
 
