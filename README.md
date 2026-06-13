@@ -8,7 +8,6 @@ This repository houses an end-to-end, multi-modal generative AI pipeline designe
 Rather than a simple linear script, this system is built on strict **Hexagonal Architecture (Ports and Adapters)**, featuring a Human-in-the-Loop (HITL) Streamlit state machine that orchestrates 5 different AI models and APIs simultaneously.
 
 *(Space reserved for future Architecture Diagram)*
-`[Insert Architecture Diagram Here]`
 
 ## 🏗️ Architecture & Design Patterns
 
@@ -36,7 +35,6 @@ The UI (`ui.py`) is not just a static dashboard; it is a complex state machine b
 * **RAG-Powered Trend Generation:** Queries ChromaDB and Tavily to generate content strictly based on current internet trends and curated psychological frameworks.
 
 *(Space reserved for future UI Screenshots)*
-`[Insert UI Screenshot Here]`
 
 ## 💻 Developer Setup
 
