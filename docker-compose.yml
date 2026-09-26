@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./chroma_storage:/app/chroma_storage
+      - ./data:/app/data
+      - ./font:/app/font
+      - ./videos_descr_esp.txt:/app/videos_descr_esp.txt
+    shm_size: '2gb'
+    restart: unless-stopped

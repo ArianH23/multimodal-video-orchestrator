@@ -60,7 +60,8 @@ class OpenCVImageAdapter(ImageRendererPort):
         max_width = 325 * 4
 
         text1_pos = (50, 400)
-        text2_pos = (50, text1_pos[1] + (150 * spec.text_diff_mult))
+        line_height = font_sz + border_sz * 2
+        padding_between_quotes = 50
 
         img = cv2.imread(spec.image_path, cv2.IMREAD_UNCHANGED)
         if img is None:
@@ -79,47 +80,17 @@ class OpenCVImageAdapter(ImageRendererPort):
             text_width = bbox[2] - bbox[0]
             line_pos = ((pil_image.width - text_width) // 2, y)
             self._draw_text_with_border(draw, line, line_pos, font, fill_color, border_color, border_sz)
-            y += font_sz + border_sz * 2
+            y += line_height
 
         lines2 = self._wrap_text(spec.text2, font, max_width)
-        y = text2_pos[1]
+        y = text1_pos[1] + len(lines1) * line_height + padding_between_quotes
         for line in lines2:
             bbox = font.getbbox(line)
             text_width = bbox[2] - bbox[0]
             line_pos = ((pil_image.width - text_width) // 2, y)
             self._draw_text_with_border(draw, line, line_pos, font, fill_color, border_color, border_sz)
-            y += font_sz + border_sz * 2
+            y += line_height
 
         pil_image.save(spec.output_path)
 
         return spec.output_path
-
-
-def calculate_dynamic_y_shift(text1: str, font_path: str, font_sz: int, border_sz: int, max_width: int,
-                              starting_y: int = 400) -> int:
-    font = ImageFont.truetype(font_file=font_path, size=font_sz)
-
-    lines = []
-    words = text1.split()
-    line = []
-    for word in words:
-        test_line = ' '.join(line + [word])
-        bbox = font.getbbox(test_line)
-        if bbox[2] - bbox[0] <= max_width:
-            line.append(word)
-        else:
-            lines.append(' '.join(line))
-            line = [word]
-    if line:
-        lines.append(' '.join(line))
-
-    line_count = len(lines)
-
-    line_height = font_sz + (border_sz * 2)
-
-    padding_between_quotes = 50
-
-    total_height_of_text1 = line_count * line_height
-    new_y_position = starting_y + total_height_of_text1 + padding_between_quotes
-
-    return new_y_position

@@ -1,12 +1,21 @@
 # adapters/search/tavily_adapter.py
 from tavily import TavilyClient
 from domain.ports.trend_searcher import TrendSearcherPort
+from domain.ports.health_check import HealthCheckPort
+from domain.models.health_status import HealthStatus
 from domain.models.trends import TrendReport, TrendSource
 
 
-class TavilyTrendAdapter(TrendSearcherPort):
+class TavilyTrendAdapter(TrendSearcherPort, HealthCheckPort):
     def __init__(self, api_key: str):
         self.client = TavilyClient(api_key=api_key)
+
+    def check_health(self) -> HealthStatus:
+        try:
+            self.client.search(query="ping", max_results=1)
+            return HealthStatus("OK", "key valid (Tavily exposes no credit balance endpoint)")
+        except Exception as e:
+            return HealthStatus("FAIL", str(e))
 
     def fetch_current_trends(self, region: str = "España") -> TrendReport:
         print(f"Querying Tavily for current trends in {region}...")

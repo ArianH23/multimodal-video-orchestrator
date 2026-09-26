@@ -3,37 +3,31 @@ from abc import ABC
 from google import genai
 from google.genai import types
 from domain.ports.image_gen import ImageGeneratorPort
+from domain.ports.health_check import HealthCheckPort
+from domain.models.health_status import HealthStatus
+from adapters.gemini.gemini_health import check_gemini_model_health
 
 
-class GeminiImageAdapter(ImageGeneratorPort, ABC):
-    def __init__(self, api_key, model="imagen-4.0-ultra-generate-001"):
+class GeminiImageAdapter(ImageGeneratorPort, HealthCheckPort, ABC):
+    def __init__(self, api_key, model="gemini-3-pro-image"):
         self.client = genai.Client(api_key=api_key)
         self.model = model
-        self.number_of_images = 1  # @param {type:"slider", min:1, max:4, step:1}
-        self.person_generation = "ALLOW_ADULT"  # @param ['DONT_ALLOW', 'ALLOW_ADULT']
         self.aspect_ratio = "9:16"  # @param ["1:1", "3:4", "4:3", "16:9", "9:16"]
 
+    def check_health(self) -> HealthStatus:
+        return check_gemini_model_health(self.client, self.model, required_action="generateContent")
+
     def create_image(self, prompt):
-        result = self.client.models.generate_images(
+        resp = self.client.models.generate_content(
             model=self.model,
-            prompt=prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=self.number_of_images,
-                output_mime_type="image/png",
-                person_generation=self.person_generation,
-                aspect_ratio=self.aspect_ratio,
-                image_size="2K"
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio)
             )
         )
 
-        generated_image = result.generated_images[0]
+        for part in resp.candidates[0].content.parts:
+            if part.inline_data:
+                return part.inline_data.data
 
-        image_bytes = generated_image.image.image_bytes
-        return image_bytes
-        # mime_type = generated_image.image.mime_type
-        #
-        # ext = "." + mime_type.split('/')[-1]
-        # # path = "current_analysis/" + img_name + ext
-        # filename = "current_analysis/" + img_name + ext
-        # with open(filename, "wb") as f:
-        #     f.write(image_bytes)
+        raise ValueError("Gemini response did not contain an image part.")

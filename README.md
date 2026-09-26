@@ -49,7 +49,33 @@ This pipeline is designed for developers comfortable with managing complex Pytho
 3. **Python Dependencies:** Install the required packages listed in `requirements.txt`.
 4. **Missing Assets:** You must create a `font/` directory with a valid `.ttf` file and populate `data/prompts/` with your own `.txt` instruction templates before execution.
 5. **Execution:** Launch the HITL studio via Streamlit:
-6. 
+
    ```bash
    streamlit run ui.py
    ```
+
+## 🐳 Run with Docker
+
+The Streamlit app can also be run in a container, which bundles Python 3.10 and all system dependencies (ffmpeg, libsndfile, OpenCV runtime libs).
+
+1. Create your `.env` file as described above (`API_KEY`, `XI_API_KEY`, `SUNO_API_KEY`, `TAVILY_API_KEY`, plus `SPANISH_VOICE_ID`, `EMBEDDING_MODEL`, `LLM_MODEL`, `IMAGE_MODEL`, `SUNO_MODEL`).
+2. Make sure `font/` and `data/prompts/` already exist locally with your assets/templates — these are bind-mounted into the container, not baked into the image.
+3. Build and start the app:
+
+   ```bash
+   docker compose up --build
+   ```
+
+4. Open `http://localhost:8501`.
+
+Generated output (`data/`), the ChromaDB vector store (`chroma_storage/`), and fonts (`font/`) are bind-mounted from the host so they persist across container restarts.
+
+## 🎹 Running `key_player.py`
+
+`key_player.py` replays recorded keystrokes into whatever window on your machine currently has focus (via `pyautogui`/`pynput`). It needs direct control of your real keyboard, so it cannot run inside Docker — run it natively instead:
+
+```bash
+run_key_player.bat
+```
+
+This activates the local `.venv` and runs `python key_player.py`. It expects a `recorded_keys.txt` file next to it, and its extra dependencies (`pyautogui`, `pynput`, etc.) are listed separately in `requirements-key_player.txt`.

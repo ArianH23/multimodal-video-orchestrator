@@ -29,23 +29,82 @@ from domain.services.title_orchestrator import TitleImageOrchestratorService
 from domain.services.audio_analaysys_orchestrator import AudioAnalysisService
 from domain.services.trends_orchestrator import TrendOrchestratorService
 
+from check_api_health import run_checks
+from adapters.sunoapi.suno_music_adapter import KNOWN_MODELS as SUNO_KNOWN_MODELS
+
+dotenv.load_dotenv()
+
+
+# ==========================================
+# MODEL DISCOVERY (for the sidebar selector)
+# ==========================================
+@st.cache_data(ttl=3600)
+def list_gemini_models(api_key: str):
+    """Returns {model_name: [supported_actions]} for every model the key can see."""
+    if not api_key:
+        return {}
+    from google import genai
+    client = genai.Client(api_key=api_key)
+    return {m.name.removeprefix("models/"): (m.supported_actions or []) for m in client.models.list()}
+
+
+def model_options(all_models: dict, required_action: str, name_filter=None):
+    names = [
+        name for name, actions in all_models.items()
+        if required_action in actions and (name_filter is None or name_filter(name))
+    ]
+    return sorted(names)
+
+
+def model_selector(label, key, env_var, options, help_text=None):
+    """Selectbox defaulting to the .env value (falls back to first option if missing/stale)."""
+    if key not in st.session_state:
+        env_default = os.getenv(env_var)
+        st.session_state[key] = env_default if env_default in options else (options[0] if options else env_default)
+
+    if not options:
+        st.text_input(label, value=st.session_state[key] or "", key=f"{key}_manual", help=help_text,
+                       on_change=lambda: st.session_state.update({key: st.session_state[f"{key}_manual"]}))
+        return st.session_state[key]
+
+    return st.selectbox(label, options=options, key=key, help=help_text)
+
+
+def render_model_config_sidebar():
+    st.sidebar.header("⚙️ Model Configuration")
+    st.sidebar.caption("Overrides `.env` for this session only — handy for Docker, where editing `.env` needs a container restart.")
+
+    gemini_api_key = os.getenv('API_KEY')
+    gemini_models = list_gemini_models(gemini_api_key)
+
+    llm_options = model_options(gemini_models, "generateContent", name_filter=lambda n: "image" not in n)
+    image_options = model_options(gemini_models, "generateContent", name_filter=lambda n: "image" in n)
+    embedding_options = model_options(gemini_models, "embedContent")
+    suno_options = sorted(SUNO_KNOWN_MODELS)
+
+    llm_model = model_selector("LLM Model", "sel_llm_model", "LLM_MODEL", llm_options)
+    image_model = model_selector("Image Model", "sel_image_model", "IMAGE_MODEL", image_options)
+    embedding_model = model_selector("Embedding Model", "sel_embedding_model", "EMBEDDING_MODEL", embedding_options)
+    suno_model = model_selector("Suno Model", "sel_suno_model", "SUNO_MODEL", suno_options)
+
+    return {
+        "LLM_MODEL": llm_model,
+        "IMAGE_MODEL": image_model,
+        "EMBEDDING_MODEL": embedding_model,
+        "SUNO_MODEL": suno_model,
+    }
+
 
 # ==========================================
 # 1. DEPENDENCY INJECTION (CACHED)
 # ==========================================
 @st.cache_resource
-def load_services():
-    dotenv.load_dotenv()
-
+def load_services(llm_model, image_model, embedding_model, suno_model):
     gemini_api_key = os.getenv('API_KEY')
     elevenlabs_api_key = os.getenv("XI_API_KEY")
     spanish_voice_id = os.getenv('SPANISH_VOICE_ID')
     tavily_api_key = os.getenv("TAVILY_API_KEY")
     suno_api_key = os.getenv("SUNO_API_KEY")
-    embedding_model = os.getenv("EMBEDDING_MODEL")
-    llm_model = os.getenv("LLM_MODEL")
-    image_model = os.getenv("IMAGE_MODEL")
-    suno_model = os.getenv("SUNO_MODEL")
 
     font = 'font/League_Spartan/static/LeagueSpartan-Bold.ttf'
     logo = 'data/logo/logo.png'
@@ -79,7 +138,16 @@ def load_services():
     }
 
 
-services = load_services()
+st.set_page_config(page_title="Multimodal Video Studio", layout="wide")
+st.title("🎬 Multi-Topic Studio")
+
+selected_models = render_model_config_sidebar()
+services = load_services(
+    selected_models["LLM_MODEL"],
+    selected_models["IMAGE_MODEL"],
+    selected_models["EMBEDDING_MODEL"],
+    selected_models["SUNO_MODEL"],
+)
 
 # ==========================================
 # 2. STATE MACHINE SETUP
@@ -99,14 +167,40 @@ def reset():
     st.rerun()
 
 
-st.set_page_config(page_title="Multimodal Video Studio", layout="wide")
-st.title("🎬 Multi-Topic Studio")
+# ==========================================
+# API / MODEL HEALTH PANEL
+# ==========================================
+@st.cache_data(ttl=300)
+def get_health_checks(model_overrides_tuple):
+    return run_checks(model_overrides=dict(model_overrides_tuple))
+
+
+STATUS_ICON = {"OK": "✅", "WARN": "⚠️", "FAIL": "❌", "SKIPPED": "⏭️"}
+
+
+def render_health_panel():
+    with st.expander("🩺 API & Model Health"):
+        if st.button("🔄 Refresh", key="refresh_health"):
+            get_health_checks.clear()
+            st.rerun()
+
+        checks = get_health_checks(tuple(selected_models.items()))
+        overall_bad = [c for c in checks if c[1] in ("FAIL", "WARN")]
+        if overall_bad:
+            st.warning(f"{len(overall_bad)} issue(s) detected — see details below.")
+        else:
+            st.success("All services and models are available.")
+
+        for name, status, detail in checks:
+            st.markdown(f"{STATUS_ICON.get(status, '❔')} **{name}** — {detail}")
+
 
 # ==========================================
 # STEP 1: GENERATE & SELECT TOPICS
 # ==========================================
 if st.session_state.step == 1:
     st.header("Step 1: Discover & Select Topics")
+    render_health_panel()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -435,6 +529,7 @@ elif st.session_state.step == 3:
                         st.write("🖼️ Applying text overlays & titles...")
                         final_image_path = f"data/images/{my_dict2['image_name']}.png"
                         services["storer"].move(chosen_img_path, final_image_path)
+                        st.session_state.final_selections[topic] = final_image_path
 
                         text_diff_mult = 2
                         services["image_service"].generate_final_image(

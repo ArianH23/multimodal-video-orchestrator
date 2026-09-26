@@ -5,11 +5,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_audioclips, CompositeAudioClip
 from moviepy.audio.AudioClip import AudioArrayClip
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import math
-from multiprocessing import shared_memory
-import pickle
 
 from domain.ports.video_renderer import VideoRendererPort
 from domain.models.video_spec import VideoSpecification
@@ -26,24 +23,11 @@ CORNERS_ENUMS = {
     "CD": (0.4, 0.5),
 }
 
-_text_cache = None
-_current_shm_name = None
 
-
-def process_frame_with_shm(frame_num, total_frames, zoom_out_duration, fps, w, h, img,
-                            start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
-                            end_fade_frame, overlay_image, overlay_width, overlay_height,
-                            duration, queue, shm_name, cache_size):
-    global _text_cache, _current_shm_name
-
-    # Load cache from shared memory (only once per worker)
-    if _text_cache is None or _current_shm_name != shm_name:
-        shm = shared_memory.SharedMemory(name=shm_name)
-        cache_bytes = bytes(shm.buf[:cache_size])
-        _text_cache = pickle.loads(cache_bytes)
-        _current_shm_name = shm_name
-        shm.close()  # Don't unlink, just close our handle
-
+def process_frame(frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                   start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                   end_fade_frame, overlay_image, overlay_width, overlay_height,
+                   duration, text_layers):
     # Ken Burns zoom logic
     if frame_num < total_frames - zoom_out_duration * fps:
         linear_progress = frame_num / ((total_frames) - zoom_out_duration * fps)
@@ -74,14 +58,13 @@ def process_frame_with_shm(frame_num, total_frames, zoom_out_duration, fps, w, h
     # Convert to PIL
     pil_image = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB)).convert('RGBA')
 
-    # Grab pre-rendered text from LOCAL cache (loaded from shared memory)
     if frame_num < start_fade_frame:
-        text_layer_np = _text_cache['text1_only']
+        text_layer_np = text_layers['text1_only']
     elif frame_num >= end_fade_frame:
-        text_layer_np = _text_cache['both_texts']
+        text_layer_np = text_layers['both_texts']
     else:
         fade_index = int(frame_num - start_fade_frame)
-        text_layer_np = _text_cache['fade_frames'][fade_index]
+        text_layer_np = text_layers['fade_frames'][fade_index]
 
     # Composite
     text_layer = Image.fromarray(text_layer_np)
@@ -94,7 +77,6 @@ def process_frame_with_shm(frame_num, total_frames, zoom_out_duration, fps, w, h
 
     cropped_img = cv2.cvtColor(np.array(pil_image.convert('RGB')), cv2.COLOR_RGB2BGR)
 
-    queue.put(1)
     return frame_num, cropped_img
 
 
@@ -197,15 +179,6 @@ class OpenCVVideoAdapter(VideoRendererPort):
         final_img = cv2.addWeighted(contrast_img, 0.7, vignette_img.astype(np.uint8), 0.3, 0)
         return final_img
 
-    def _progress_updater(self, queue, total_frames):
-        """Reads from the queue and prints progress updates."""
-        processed_frames = 0
-        while processed_frames < total_frames:
-            queue.get()  # Wait for a signal from a worker
-            processed_frames += 1
-            if processed_frames % 10 == 0:
-                print(f"Processed: {processed_frames}/{total_frames}")
-
     def _generate_silence(self, duration=1, fps=44100):
         silent_array = np.zeros((int(fps * duration), 2))  # Stereo silence
         return AudioArrayClip(silent_array, fps=fps)
@@ -254,7 +227,6 @@ class OpenCVVideoAdapter(VideoRendererPort):
         end_fade_frame = start_fade_frame + 2 * fps
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
 
         overlay_image = None
         if overlay_image_path:
@@ -309,51 +281,53 @@ class OpenCVVideoAdapter(VideoRendererPort):
         text_layers['fade_frames'] = fade_frames_list
         print(f"Pre-rendered {len(fade_frames_list)} fade frames")
 
-        # SERIALIZE the entire cache once and put in shared memory
-        cache_bytes = pickle.dumps(text_layers)
-        cache_size = len(cache_bytes)
-        print(f"Text cache size: {cache_size / 1024 / 1024:.1f} MB")
+        cv2.setNumThreads(1)
 
-        # Create shared memory block
-        shm = shared_memory.SharedMemory(create=True, size=cache_size)
-        shm.buf[:cache_size] = cache_bytes
+        max_workers = 8
+        in_flight_window = max_workers * 4
 
-        # Pass only the NAME of the shared memory (tiny string!)
-        shm_name = shm.name
+        video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
+        pending_frames = {}
+        next_frame_to_write = 0
+        next_frame_to_submit = 0
+        processed_count = 0
+        in_flight = {}
 
-        with multiprocessing.Manager() as manager:
-            queue = manager.Queue()
+        def submit_frame(frame_num, executor):
+            return executor.submit(
+                process_frame,
+                frame_num, total_frames, zoom_out_duration, fps, w, h, img,
+                start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
+                end_fade_frame, overlay_image, overlay_width, overlay_height,
+                duration, text_layers
+            )
 
-            progress_process = multiprocessing.Process(target=self._progress_updater, args=(queue, total_frames))
-            progress_process.start()
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            while next_frame_to_submit < total_frames and len(in_flight) < in_flight_window:
+                fut = submit_frame(next_frame_to_submit, executor)
+                in_flight[fut] = next_frame_to_submit
+                next_frame_to_submit += 1
 
-            frames_dict = {}
-            with ProcessPoolExecutor(max_workers=2) as executor:
-                futures = {
-                    executor.submit(
-                        process_frame_with_shm,  # New function
-                        frame_num, total_frames, zoom_out_duration, fps, w, h, img,
-                        start_pt, end_pt, start_zoom, end_zoom, start_fade_frame,
-                        end_fade_frame, overlay_image, overlay_width, overlay_height,
-                        duration, queue, shm_name, cache_size  # Just pass name and size!
-                    ): frame_num for frame_num in range(total_frames)
-                }
+            while in_flight:
+                future = next(as_completed(in_flight))
+                del in_flight[future]
+                frame_num, frame = future.result()
+                pending_frames[frame_num] = frame
 
-                for future in as_completed(futures):
-                    frame_num, frame = future.result()
-                    frames_dict[frame_num] = frame
+                while next_frame_to_write in pending_frames:
+                    video_writer.write(pending_frames.pop(next_frame_to_write))
+                    next_frame_to_write += 1
 
-            progress_process.join()
+                processed_count += 1
+                if processed_count % 10 == 0:
+                    print(f"Processed: {processed_count}/{total_frames}")
 
-            # Write frames in order
-            video_writer = cv2.VideoWriter('temp_video.mp4', fourcc, fps, (w, h))
-            for frame_num in sorted(frames_dict.keys()):
-                video_writer.write(frames_dict[frame_num])
-            video_writer.release()
+                if next_frame_to_submit < total_frames:
+                    fut = submit_frame(next_frame_to_submit, executor)
+                    in_flight[fut] = next_frame_to_submit
+                    next_frame_to_submit += 1
 
-            # Cleanup shared memory
-            shm.close()
-            shm.unlink()
+        video_writer.release()
 
         if audio_file:
             video_clip = VideoFileClip('temp_video.mp4')
