@@ -9,19 +9,23 @@ from adapters.gemini.gemini_health import check_gemini_model_health
 
 
 class GeminiImageAdapter(ImageGeneratorPort, HealthCheckPort, ABC):
-    def __init__(self, api_key, model="gemini-3-pro-image"):
+    def __init__(self, api_key, model="gemini-3-pro-image", temperature: float = 1.0):
         self.client = genai.Client(api_key=api_key)
         self.model = model
+        self.temperature = temperature
         self.aspect_ratio = "9:16"  # @param ["1:1", "3:4", "4:3", "16:9", "9:16"]
 
     def check_health(self) -> HealthStatus:
         return check_gemini_model_health(self.client, self.model, required_action="generateContent")
 
     def create_image(self, prompt):
+        prompt = f"{prompt} No text, words, letters, numbers, signage, or typography anywhere in the image."
+
         resp = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(
+                temperature=self.temperature,
                 image_config=types.ImageConfig(aspect_ratio=self.aspect_ratio)
             )
         )

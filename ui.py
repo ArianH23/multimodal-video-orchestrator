@@ -87,11 +87,25 @@ def render_model_config_sidebar():
     embedding_model = model_selector("Embedding Model", "sel_embedding_model", "EMBEDDING_MODEL", embedding_options)
     suno_model = model_selector("Suno Model", "sel_suno_model", "SUNO_MODEL", suno_options)
 
+    st.sidebar.markdown("---")
+    llm_temperature = st.sidebar.slider(
+        "LLM Temperature", 0.0, 2.0,
+        value=float(os.getenv("LLM_TEMPERATURE", 0.7)), step=0.05,
+        help="Quote/prompt text creativity. Higher = more varied wording."
+    )
+    image_temperature = st.sidebar.slider(
+        "Image Temperature", 0.0, 2.0,
+        value=float(os.getenv("IMAGE_TEMPERATURE", 1.0)), step=0.05,
+        help="Visual sampling diversity for a given prompt. Higher = more varied images."
+    )
+
     return {
         "LLM_MODEL": llm_model,
         "IMAGE_MODEL": image_model,
         "EMBEDDING_MODEL": embedding_model,
         "SUNO_MODEL": suno_model,
+        "LLM_TEMPERATURE": llm_temperature,
+        "IMAGE_TEMPERATURE": image_temperature,
     }
 
 
@@ -99,7 +113,7 @@ def render_model_config_sidebar():
 # 1. DEPENDENCY INJECTION (CACHED)
 # ==========================================
 @st.cache_resource
-def load_services(llm_model, image_model, embedding_model, suno_model):
+def load_services(llm_model, image_model, embedding_model, suno_model, llm_temperature, image_temperature):
     gemini_api_key = os.getenv('API_KEY')
     elevenlabs_api_key = os.getenv("XI_API_KEY")
     spanish_voice_id = os.getenv('SPANISH_VOICE_ID')
@@ -118,8 +132,8 @@ def load_services(llm_model, image_model, embedding_model, suno_model):
     modern_gemini_ef = ModernGeminiEmbeddingAdapter(api_key=gemini_api_key, model_name=embedding_model)
     chroma_adapter = ChromaTopicAdapter(storage_path="./chroma_storage", embedding_function=modern_gemini_ef)
     storer = LocalFileStorageAdapter('.')
-    gemini_text_adapter = GeminiTextAdapter(gemini_api_key, llm_model)
-    gemini_image_adapter = GeminiImageAdapter(gemini_api_key, image_model)
+    gemini_text_adapter = GeminiTextAdapter(gemini_api_key, llm_model, temperature=llm_temperature)
+    gemini_image_adapter = GeminiImageAdapter(gemini_api_key, image_model, temperature=image_temperature)
     voice_adapter = ElevenLabsVoiceAdapter(api_key=elevenlabs_api_key, voice_id=spanish_voice_id)
     suno_adapter = SunoMusicAdapter(suno_api_key, suno_model)
 
@@ -147,6 +161,8 @@ services = load_services(
     selected_models["IMAGE_MODEL"],
     selected_models["EMBEDDING_MODEL"],
     selected_models["SUNO_MODEL"],
+    selected_models["LLM_TEMPERATURE"],
+    selected_models["IMAGE_TEMPERATURE"],
 )
 
 # ==========================================
@@ -369,98 +385,88 @@ if st.session_state.step == 1:
 # ==========================================
 elif st.session_state.step == 2:
     st.header("Step 2: Visual Selection Gallery")
+    st.success("Pick the concept you like for each topic, then generate only that one.")
 
-    # --- 1. THE BATCH GENERATOR ---
-    # We use a progress bar to show the user that we are generating all images upfront.
-    if 'images_generated' not in st.session_state:
-        st.session_state.images_generated = False
+    temp_selections = {}
 
-    if not st.session_state.images_generated:
-        st.markdown("### 🎨 Batch Generating Images...")
-        progress_bar = st.progress(0.0)
-        total = len(st.session_state.topics_to_process)
-
-        for idx, topic in enumerate(st.session_state.topics_to_process):
-            state_key_1 = f"img1_{topic}"
-            state_key_2 = f"img2_{topic}"
-
-            # Only generate if they don't exist yet (allows for targeted regenerations later)
-            if state_key_1 not in st.session_state or state_key_2 not in st.session_state:
-                with st.spinner(f"Generating 2 concepts for '{topic}'..."):
-                    topic_data = st.session_state.my_dict[topic]
-                    prompt1 = topic_data['image_prompts'][0]
-                    prompt2 = topic_data['image_prompts'][1]
-
-                    path1 = f"data/images/current/{topic}_1.png"
-                    path2 = f"data/images/current/{topic}_2.png"
-
-                    st.session_state[state_key_1] = services["image_generator"].generate(prompt1, path1)
-                    st.session_state[state_key_2] = services["image_generator"].generate(prompt2, path2)
-
-            progress_bar.progress((idx + 1) / total)
-
-        st.session_state.images_generated = True
-        st.rerun()  # Refresh the page to show the gallery
-
-    # --- 2. THE GALLERY DASHBOARD ---
-    if st.session_state.images_generated:
-        st.success("All images generated! Please make your selections below.")
-
-        # We will collect the user's choices in this dictionary before saving to the final state
-        temp_selections = {}
-
-        for topic in st.session_state.topics_to_process:
-            st.markdown("---")
-            st.subheader(f"Topic: {topic}")
-
-            state_key_1 = f"img1_{topic}"
-            state_key_2 = f"img2_{topic}"
-
-            # Create a 3-column layout: Option A | Option B | Controls
-            colA, colB, colC = st.columns([1, 1, 1.5])
-
-            with colA:
-                st.image(st.session_state[state_key_1], caption="Option A", width=250)
-            with colB:
-                st.image(st.session_state[state_key_2], caption="Option B", width=250)
-
-            with colC:
-                st.markdown("#### Action")
-                # Use a radio button for the selection logic
-                choice = st.radio(
-                    "Select an option for this topic:",
-                    ["Option A", "Option B", "Skip this Topic"],
-                    key=f"radio_{topic}",
-                    index=0
-                )
-                temp_selections[topic] = choice
-
-                # Targeted Regeneration Button
-                if st.button(f"🔄 Regenerate images for {topic}", key=f"regen_{topic}"):
-                    del st.session_state[state_key_1]
-                    del st.session_state[state_key_2]
-                    st.session_state.images_generated = False  # Force the generator loop to run again
-                    st.rerun()
-
+    for topic in st.session_state.topics_to_process:
         st.markdown("---")
+        st.subheader(f"Topic: {topic}")
 
-        # --- 3. FINAL CONFIRMATION BUTTON ---
-        if st.button("✅ Confirm All Selections & Proceed to Render Settings", type="primary", use_container_width=True):
-            # Process the temporary selections into the final state
-            st.session_state.final_selections = {}
-            st.session_state.corner_selections = {}
+        prompts = st.session_state.my_dict[topic]['image_prompts']
+        img_key = f"img_{topic}"
+        prompt_idx_key = f"prompt_idx_{topic}"
 
-            for topic, choice in temp_selections.items():
-                if choice == "Option A":
-                    st.session_state.final_selections[topic] = st.session_state[f"img1_{topic}"]
-                    st.session_state.corner_selections[topic] = "BR"  # Default, can be changed in Step 3
-                elif choice == "Option B":
-                    st.session_state.final_selections[topic] = st.session_state[f"img2_{topic}"]
-                    st.session_state.corner_selections[topic] = "BR"  # Default
-                # If "Skip", we just don't add it to final_selections
+        if img_key not in st.session_state:
+            chosen_idx = st.radio(
+                "Which concept do you want to generate?",
+                options=[0, 1],
+                format_func=lambda i: f"Concept {i + 1}: {prompts[i]}",
+                key=f"radio_prompt_{topic}"
+            )
 
-            st.session_state.step = 3
-            st.rerun()
+            if st.button(f"🎨 Generate image for '{topic}'", key=f"gen_{topic}"):
+                with st.spinner(f"Generating image for '{topic}'..."):
+                    path = f"data/images/current/{topic}_{chosen_idx + 1}.png"
+                    st.session_state[img_key] = services["image_generator"].generate(prompts[chosen_idx], path)
+                    st.session_state[prompt_idx_key] = chosen_idx
+                st.rerun()
+
+            temp_selections[topic] = "Pending"
+        else:
+            col_img, col_ctrl = st.columns([1, 2])
+
+            with col_img:
+                st.image(st.session_state[img_key], width=250)
+
+            with col_ctrl:
+                used_idx = st.session_state[prompt_idx_key]
+                other_idx = 1 - used_idx
+                st.caption(f"Generated from Concept {used_idx + 1}: {prompts[used_idx]}")
+                st.caption(f"Other concept (not generated) — Concept {other_idx + 1}: {prompts[other_idx]}")
+
+                choice = st.radio(
+                    "Action:",
+                    ["Keep this image", "Skip this topic"],
+                    key=f"keep_{topic}"
+                )
+                temp_selections[topic] = "Keep" if choice == "Keep this image" else "Skip"
+
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("🔄 Regenerate same concept", key=f"regen_same_{topic}"):
+                        with st.spinner(f"Regenerating '{topic}'..."):
+                            path = f"data/images/current/{topic}_{used_idx + 1}.png"
+                            st.session_state[img_key] = services["image_generator"].generate(prompts[used_idx], path)
+                        st.rerun()
+                with col_b:
+                    if st.button(f"🔁 Try Concept {other_idx + 1} instead", key=f"try_other_{topic}"):
+                        with st.spinner(f"Generating Concept {other_idx + 1} for '{topic}'..."):
+                            path = f"data/images/current/{topic}_{other_idx + 1}.png"
+                            st.session_state[img_key] = services["image_generator"].generate(prompts[other_idx], path)
+                            st.session_state[prompt_idx_key] = other_idx
+                        st.rerun()
+
+    st.markdown("---")
+
+    pending_topics = [topic for topic, choice in temp_selections.items() if choice == "Pending"]
+
+    if pending_topics:
+        st.warning(f"⚠️ Still need an image generated for: {', '.join(pending_topics)}")
+
+    if st.button("✅ Confirm All Selections & Proceed to Render Settings", type="primary",
+                 use_container_width=True, disabled=bool(pending_topics)):
+        st.session_state.final_selections = {}
+        st.session_state.corner_selections = {}
+
+        for topic, choice in temp_selections.items():
+            if choice == "Keep":
+                st.session_state.final_selections[topic] = st.session_state[f"img_{topic}"]
+                st.session_state.corner_selections[topic] = "BR"  # Default, can be changed in Step 3
+            # "Skip" leaves the topic out
+
+        st.session_state.step = 3
+        st.rerun()
 
 # ==========================================
 # STEP 3: FINAL PIPELINE EXECUTION
